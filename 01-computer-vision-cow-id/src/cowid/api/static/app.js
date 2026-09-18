@@ -1102,7 +1102,6 @@ async function pageQuality() {
       '<p class="note">Диагнозов за время записи в журнале фермы нет, поэтому это проверка ложных тревог, а не выявления болезней.</p></div></div>');
   }
   if (q.farm_chain) parts.splice(1, 0, farmChainPanel(q.farm_chain));
-  parts.push('<p class="note">Подробно — docs/ПРОЕКТ.md, раздел 8.</p>');
   $app.innerHTML = parts.join("");
 }
 

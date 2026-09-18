@@ -699,7 +699,7 @@ def scenarios(
     """Что детектор отклонений замечает, а что нет, при заданном разбросе.
 
     Это проверка логики детектора на описанных зоотехнических сценариях,
-    а не на данных фермы. Что она доказывает и чего нет — в docs/ПРОЕКТ.md.
+    а не на данных фермы.
     """
     from .anomaly.scenarios import SCENARIOS, run_healthy, run_scenario
     from .config import BaselineConfig
