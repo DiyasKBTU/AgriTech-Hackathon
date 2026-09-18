@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Данные, модели и состояние площадки — не в репозитории
+data/
+models/
+var/
+reports/
+*.sqlite
+*.mp4
+*.pt
+*.pth
+*.onnx
+
+# Настройки конкретной камеры; в репозитории только пример
+configs/*.yaml
+!configs/camera.example.yaml
+!configs/cows2021.yaml
+!configs/mmcows.yaml
+!configs/mmcows_sensors.yaml

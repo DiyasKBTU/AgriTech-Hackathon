@@ -1,0 +1,975 @@
+{
+ "taken": "2026-09-17T16:43:24",
+ "source": "CV-трек COW ID, http://127.0.0.1:8000 (открытый набор MmCows)",
+ "herd": {
+  "day": "2023-08-03",
+  "days": [
+   "2023-07-22",
+   "2023-07-23",
+   "2023-07-24",
+   "2023-07-25",
+   "2023-07-26",
+   "2023-07-27",
+   "2023-07-28",
+   "2023-07-29",
+   "2023-07-30",
+   "2023-07-31",
+   "2023-08-01",
+   "2023-08-02",
+   "2023-08-03"
+  ],
+  "counts": {
+   "watch": 1,
+   "ok": 9
+  },
+  "cows": [
+   {
+    "cow_id": "C08",
+    "open_events": 2,
+    "day": "2023-08-03",
+    "status": "watch",
+    "status_label": "на заметку",
+    "observed_h": 24.0,
+    "cusum": 0.41,
+    "episode_days": 1,
+    "indicators": {
+     "feeder_share": {
+      "value": 0.094186902133922,
+      "norm": 0.1689388356669123,
+      "scale": 0.017461461218244118,
+      "delta_pct": -44.2,
+      "z": -4.28,
+      "norm_days": 11,
+      "level": "strong"
+     },
+     "drinker_share": {
+      "value": 0.02207505518763797,
+      "norm": 0.02159194876486734,
+      "scale": 0.006084817363714333,
+      "delta_pct": 2.2,
+      "z": 0.08,
+      "norm_days": 11,
+      "level": null
+     },
+     "resting_share": {
+      "value": 0.5645833333333333,
+      "norm": 0.5319444444444444,
+      "scale": 0.047916916496991285,
+      "delta_pct": 6.1,
+      "z": 0.68,
+      "norm_days": 11,
+      "level": null
+     },
+     "activity_rate": {
+      "value": 112.87127405443829,
+      "norm": 60.57498601021513,
+      "scale": 13.907817725345147,
+      "delta_pct": 86.3,
+      "z": 3.76,
+      "norm_days": 11,
+      "level": "notable"
+     },
+     "milk_kg": {
+      "value": 48.081,
+      "norm": 46.72,
+      "scale": 1.8138704041159321,
+      "delta_pct": 2.9,
+      "z": 0.75,
+      "norm_days": 11,
+      "level": null
+     }
+    },
+    "signs": [
+     {
+      "metric": "feeder_share",
+      "side": "down",
+      "name": "Ест меньше",
+      "look": "аппетит, жвачка, рубец, вымя, копыта",
+      "level": "strong",
+      "delta_pct": -44.2,
+      "z": -4.28,
+      "value": 0.094186902133922,
+      "norm": 0.1689388356669123
+     },
+     {
+      "metric": "activity_rate",
+      "side": "up",
+      "name": "Больше двигается",
+      "look": "признак охоты или беспокойства",
+      "level": "notable",
+      "delta_pct": 86.3,
+      "z": 3.76,
+      "value": 112.87127405443829,
+      "norm": 60.57498601021513
+     }
+    ]
+   },
+   {
+    "cow_id": "C01",
+    "open_events": 0,
+    "day": "2023-08-03",
+    "status": "ok",
+    "status_label": "в норме",
+    "observed_h": 24.0,
+    "cusum": 0.0,
+    "episode_days": 0,
+    "indicators": {
+     "feeder_share": {
+      "value": 0.18261504747991233,
+      "norm": 0.1448679297306476,
+      "scale": 0.022913612355829158,
+      "delta_pct": 26.1,
+      "z": 1.65,
+      "norm_days": 12,
+      "level": null
+     },
+     "drinker_share": {
+      "value": 0.022279035792549307,
+      "norm": 0.01862315627509272,
+      "scale": 0.0055988814540770425,
+      "delta_pct": 19.6,
+      "z": 0.65,
+      "norm_days": 12,
+      "level": null
+     },
+     "resting_share": {
+      "value": 0.6215277777777778,
+      "norm": 0.6256944444444444,
+      "scale": 0.06353666341117632,
+      "delta_pct": -0.7,
+      "z": -0.07,
+      "norm_days": 12,
+      "level": null
+     },
+     "activity_rate": {
+      "value": 46.61534278568279,
+      "norm": 47.61769018207639,
+      "scale": 7.45197882771655,
+      "delta_pct": -2.1,
+      "z": -0.13,
+      "norm_days": 12,
+      "level": null
+     },
+     "milk_kg": {
+      "value": 31.298,
+      "norm": 33.1125,
+      "scale": 1.5055153530805203,
+      "delta_pct": -5.5,
+      "z": -1.21,
+      "norm_days": 12,
+      "level": null
+     }
+    },
+    "signs": []
+   },
+   {
+    "cow_id": "C02",
+    "open_events": 0,
+    "day": "2023-08-03",
+    "status": "ok",
+    "status_label": "в норме",
+    "observed_h": 24.0,
+    "cusum": 0.0,
+    "episode_days": 0,
+    "indicators": {
+     "feeder_share": {
+      "value": 0.23755490483162522,
+      "norm": 0.2279495560702156,
+      "scale": 0.021703861153568448,
+      "delta_pct": 4.2,
+      "z": 0.44,
+      "norm_days": 12,
+      "level": null
+     },
+     "drinker_share": {
+      "value": 0.03623718887262079,
+      "norm": 0.017603365772091165,
+      "scale": 0.006107102357313684,
+      "delta_pct": 105.9,
+      "z": 3.05,
+      "norm_days": 12,
+      "level": "notable"
+     },
+     "resting_share": {
+      "value": 0.43333333333333335,
+      "norm": 0.4513888888888889,
+      "scale": 0.05762925039798184,
+      "delta_pct": -4.0,
+      "z": -0.31,
+      "norm_days": 12,
+      "level": null
+     },
+     "activity_rate": {
+      "value": 57.01828614267449,
+      "norm": 54.774676034666896,
+      "scale": 10.93061277851818,
+      "delta_pct": 4.1,
+      "z": 0.21,
+      "norm_days": 12,
+      "level": null
+     },
+     "milk_kg": {
+      "value": 48.534,
+      "norm": 49.215,
+      "scale": 2.9574195616081167,
+      "delta_pct": -1.4,
+      "z": -0.23,
+      "norm_days": 12,
+      "level": null
+     }
+    },
+    "signs": [
+     {
+      "metric": "drinker_share",
+      "side": "up",
+      "name": "Чаще у поилки",
+      "look": "проверить жару в коровнике и температуру коровы",
+      "level": "notable",
+      "delta_pct": 105.9,
+      "z": 3.05,
+      "value": 0.03623718887262079,
+      "norm": 0.017603365772091165
+     }
+    ]
+   },
+   {
+    "cow_id": "C03",
+    "open_events": 0,
+    "day": "2023-08-03",
+    "status": "ok",
+    "status_label": "в норме",
+    "observed_h": 24.0,
+    "cusum": 0.0,
+    "episode_days": 0,
+    "indicators": {
+     "feeder_share": {
+      "value": 0.2235229559173221,
+      "norm": 0.22610674641390846,
+      "scale": 0.020037624156411794,
+      "delta_pct": -1.1,
+      "z": -0.13,
+      "norm_days": 12,
+      "level": null
+     },
+     "drinker_share": {
+      "value": 0.036948966526431315,
+      "norm": 0.031027294222240813,
+      "scale": 0.008238025089526816,
+      "delta_pct": 19.1,
+      "z": 0.72,
+      "norm_days": 12,
+      "level": null
+     },
+     "resting_share": {
+      "value": 0.5826388888888889,
+      "norm": 0.5677083333333333,
+      "scale": 0.04415851676758666,
+      "delta_pct": 2.6,
+      "z": 0.34,
+      "norm_days": 12,
+      "level": null
+     },
+     "activity_rate": {
+      "value": 49.656339021024884,
+      "norm": 51.43907516469791,
+      "scale": 12.035455346779314,
+      "delta_pct": -3.5,
+      "z": -0.15,
+      "norm_days": 12,
+      "level": null
+     },
+     "milk_kg": {
+      "value": 51.709,
+      "norm": 49.442,
+      "scale": 1.6926921340074408,
+      "delta_pct": 4.6,
+      "z": 1.34,
+      "norm_days": 12,
+      "level": null
+     }
+    },
+    "signs": []
+   },
+   {
+    "cow_id": "C04",
+    "open_events": 0,
+    "day": "2023-08-03",
+    "status": "ok",
+    "status_label": "в норме",
+    "observed_h": 24.0,
+    "cusum": 0.0,
+    "episode_days": 0,
+    "indicators": {
+     "feeder_share": {
+      "value": 0.18650575973669775,
+      "norm": 0.1688463729083996,
+      "scale": 0.018594366163620372,
+      "delta_pct": 10.5,
+      "z": 0.95,
+      "norm_days": 12,
+      "level": null
+     },
+     "drinker_share": {
+      "value": 0.058511610897787523,
+      "norm": 0.034107525984685125,
+      "scale": 0.013967342710136207,
+      "delta_pct": 71.6,
+      "z": 1.75,
+      "norm_days": 12,
+      "level": null
+     },
+     "resting_share": {
+      "value": 0.5305555555555556,
+      "norm": 0.5239583333333333,
+      "scale": 0.05506172655369323,
+      "delta_pct": 1.3,
+      "z": 0.12,
+      "norm_days": 12,
+      "level": null
+     },
+     "activity_rate": {
+      "value": 40.09152846607868,
+      "norm": 39.76039353945333,
+      "scale": 7.092264707714566,
+      "delta_pct": 0.8,
+      "z": 0.05,
+      "norm_days": 12,
+      "level": null
+     },
+     "milk_kg": {
+      "value": 38.555,
+      "norm": 37.625,
+      "scale": 2.3412898133435256,
+      "delta_pct": 2.5,
+      "z": 0.4,
+      "norm_days": 12,
+      "level": null
+     }
+    },
+    "signs": []
+   },
+   {
+    "cow_id": "C05",
+    "open_events": 1,
+    "day": "2023-08-03",
+    "status": "ok",
+    "status_label": "в норме",
+    "observed_h": 24.0,
+    "cusum": 0.0,
+    "episode_days": 0,
+    "indicators": {
+     "feeder_share": {
+      "value": 0.20552708638360176,
+      "norm": 0.20959483937528534,
+      "scale": 0.017308314839292335,
+      "delta_pct": -1.9,
+      "z": -0.24,
+      "norm_days": 12,
+      "level": null
+     },
+     "drinker_share": {
+      "value": 0.025988286969253295,
+      "norm": 0.032146814352080465,
+      "scale": 0.014214230692108138,
+      "delta_pct": -19.2,
+      "z": -0.43,
+      "norm_days": 12,
+      "level": null
+     },
+     "resting_share": {
+      "value": 0.45694444444444443,
+      "norm": 0.49930555555555556,
+      "scale": 0.06948551525767827,
+      "delta_pct": -8.5,
+      "z": -0.61,
+      "norm_days": 12,
+      "level": null
+     },
+     "activity_rate": {
+      "value": 43.16266637281689,
+      "norm": 48.876406760312804,
+      "scale": 8.036816351241427,
+      "delta_pct": -11.7,
+      "z": -0.71,
+      "norm_days": 12,
+      "level": null
+     },
+     "milk_kg": {
+      "value": 53.977,
+      "norm": 53.297,
+      "scale": 3.2663861466670427,
+      "delta_pct": 1.3,
+      "z": 0.21,
+      "norm_days": 12,
+      "level": null
+     }
+    },
+    "signs": []
+   },
+   {
+    "cow_id": "C06",
+    "open_events": 1,
+    "day": "2023-08-03",
+    "status": "ok",
+    "status_label": "в норме",
+    "observed_h": 24.0,
+    "cusum": 0.0,
+    "episode_days": 0,
+    "indicators": {
+     "feeder_share": {
+      "value": 0.1638325105138051,
+      "norm": 0.21400442855774,
+      "scale": 0.024228267454653975,
+      "delta_pct": -23.4,
+      "z": -2.07,
+      "norm_days": 12,
+      "level": "notable"
+     },
+     "drinker_share": {
+      "value": 0.04479795209361858,
+      "norm": 0.030053602721368932,
+      "scale": 0.009439580498984171,
+      "delta_pct": 49.1,
+      "z": 1.56,
+      "norm_days": 12,
+      "level": null
+     },
+     "resting_share": {
+      "value": 0.3993055555555556,
+      "norm": 0.43645833333333334,
+      "scale": 0.059474937199589385,
+      "delta_pct": -8.5,
+      "z": -0.62,
+      "norm_days": 12,
+      "level": null
+     },
+     "activity_rate": {
+      "value": 58.21001599275508,
+      "norm": 63.27281984975417,
+      "scale": 7.947380772903234,
+      "delta_pct": -8.0,
+      "z": -0.64,
+      "norm_days": 12,
+      "level": null
+     },
+     "milk_kg": {
+      "value": 49.442,
+      "norm": 49.6685,
+      "scale": 1.6984526661453094,
+      "delta_pct": -0.5,
+      "z": -0.13,
+      "norm_days": 12,
+      "level": null
+     }
+    },
+    "signs": [
+     {
+      "metric": "feeder_share",
+      "side": "down",
+      "name": "Ест меньше",
+      "look": "аппетит, жвачка, рубец, вымя, копыта",
+      "level": "notable",
+      "delta_pct": -23.4,
+      "z": -2.07,
+      "value": 0.1638325105138051,
+      "norm": 0.21400442855774
+     }
+    ]
+   },
+   {
+    "cow_id": "C07",
+    "open_events": 0,
+    "day": "2023-08-03",
+    "status": "ok",
+    "status_label": "в норме",
+    "observed_h": 24.0,
+    "cusum": 0.0,
+    "episode_days": 0,
+    "indicators": {
+     "feeder_share": {
+      "value": 0.18311664530305805,
+      "norm": 0.1809644868656723,
+      "scale": 0.013019052101718161,
+      "delta_pct": 1.2,
+      "z": 0.17,
+      "norm_days": 12,
+      "level": null
+     },
+     "drinker_share": {
+      "value": 0.012451931880607947,
+      "norm": 0.01083122574282624,
+      "scale": 0.0032745007286570696,
+      "delta_pct": 15.0,
+      "z": 0.49,
+      "norm_days": 12,
+      "level": null
+     },
+     "resting_share": {
+      "value": 0.6888888888888889,
+      "norm": 0.6770833333333334,
+      "scale": 0.052371463928865714,
+      "delta_pct": 1.7,
+      "z": 0.23,
+      "norm_days": 12,
+      "level": null
+     },
+     "activity_rate": {
+      "value": 44.96453674509987,
+      "norm": 45.5618340867713,
+      "scale": 8.942000748279973,
+      "delta_pct": -1.3,
+      "z": -0.07,
+      "norm_days": 12,
+      "level": null
+     },
+     "milk_kg": {
+      "value": 50.349,
+      "norm": 48.307500000000005,
+      "scale": 2.231699958879297,
+      "delta_pct": 4.2,
+      "z": 0.91,
+      "norm_days": 12,
+      "level": null
+     }
+    },
+    "signs": []
+   },
+   {
+    "cow_id": "C09",
+    "open_events": 0,
+    "day": "2023-08-03",
+    "status": "ok",
+    "status_label": "в норме",
+    "observed_h": 24.0,
+    "cusum": 0.0,
+    "episode_days": 0,
+    "indicators": {
+     "feeder_share": {
+      "value": 0.13103953147877012,
+      "norm": 0.16187424844173254,
+      "scale": 0.01936241753385724,
+      "delta_pct": -19.0,
+      "z": -1.59,
+      "norm_days": 12,
+      "level": null
+     },
+     "drinker_share": {
+      "value": 0.03349194729136164,
+      "norm": 0.029839929968507678,
+      "scale": 0.008644855629202893,
+      "delta_pct": 12.2,
+      "z": 0.42,
+      "norm_days": 12,
+      "level": null
+     },
+     "resting_share": {
+      "value": 0.5118055555555555,
+      "norm": 0.5388888888888889,
+      "scale": 0.06537257393627113,
+      "delta_pct": -5.0,
+      "z": -0.41,
+      "norm_days": 12,
+      "level": null
+     },
+     "activity_rate": {
+      "value": 77.12242523315048,
+      "norm": 69.58034117560962,
+      "scale": 16.30491389863053,
+      "delta_pct": 10.8,
+      "z": 0.46,
+      "norm_days": 12,
+      "level": null
+     },
+     "milk_kg": {
+      "value": 47.174,
+      "norm": 48.081,
+      "scale": 2.4557023718189708,
+      "delta_pct": -1.9,
+      "z": -0.37,
+      "norm_days": 12,
+      "level": null
+     }
+    },
+    "signs": []
+   },
+   {
+    "cow_id": "C10",
+    "open_events": 0,
+    "day": "2023-08-03",
+    "status": "ok",
+    "status_label": "в норме",
+    "observed_h": 24.0,
+    "cusum": 0.0,
+    "episode_days": 0,
+    "indicators": {
+     "feeder_share": {
+      "value": 0.14617636297109404,
+      "norm": 0.1348049460037366,
+      "scale": 0.01463568994006827,
+      "delta_pct": 8.4,
+      "z": 0.78,
+      "norm_days": 12,
+      "level": null
+     },
+     "drinker_share": {
+      "value": 0.04610318331503842,
+      "norm": 0.034689602804341024,
+      "scale": 0.01896533322063282,
+      "delta_pct": 32.9,
+      "z": 0.6,
+      "norm_days": 12,
+      "level": null
+     },
+     "resting_share": {
+      "value": 0.58125,
+      "norm": 0.61875,
+      "scale": 0.06464298535398866,
+      "delta_pct": -6.1,
+      "z": -0.58,
+      "norm_days": 12,
+      "level": null
+     },
+     "activity_rate": {
+      "value": 39.767041829441915,
+      "norm": 48.22806512802577,
+      "scale": 8.235446689663267,
+      "delta_pct": -17.5,
+      "z": -1.03,
+      "norm_days": 12,
+      "level": null
+     },
+     "milk_kg": {
+      "value": 47.174,
+      "norm": 48.081,
+      "scale": 2.4557023718189708,
+      "delta_pct": -1.9,
+      "z": -0.37,
+      "norm_days": 12,
+      "level": null
+     }
+    },
+    "signs": []
+   }
+  ],
+  "board": [
+   {
+    "metric": "feeder_share",
+    "side": "down",
+    "name": "Ест меньше",
+    "look": "аппетит, жвачка, рубец, вымя, копыта",
+    "strong": [
+     {
+      "cow_id": "C08",
+      "status": "watch",
+      "metric": "feeder_share",
+      "side": "down",
+      "name": "Ест меньше",
+      "look": "аппетит, жвачка, рубец, вымя, копыта",
+      "level": "strong",
+      "delta_pct": -44.2,
+      "z": -4.28,
+      "value": 0.094186902133922,
+      "norm": 0.1689388356669123
+     }
+    ],
+    "notable": [
+     {
+      "cow_id": "C06",
+      "status": "ok",
+      "metric": "feeder_share",
+      "side": "down",
+      "name": "Ест меньше",
+      "look": "аппетит, жвачка, рубец, вымя, копыта",
+      "level": "notable",
+      "delta_pct": -23.4,
+      "z": -2.07,
+      "value": 0.1638325105138051,
+      "norm": 0.21400442855774
+     }
+    ]
+   },
+   {
+    "metric": "resting_share",
+    "side": "up",
+    "name": "Дольше лежит",
+    "look": "посмотреть, охотно ли встаёт, ноги",
+    "strong": [],
+    "notable": []
+   },
+   {
+    "metric": "activity_rate",
+    "side": "down",
+    "name": "Меньше двигается",
+    "look": "посмотреть походку и копыта",
+    "strong": [],
+    "notable": []
+   },
+   {
+    "metric": "milk_kg",
+    "side": "down",
+    "name": "Удой ниже",
+    "look": "осмотреть вымя, проверить аппетит и рацион",
+    "strong": [],
+    "notable": []
+   },
+   {
+    "metric": "drinker_share",
+    "side": "down",
+    "name": "Пьёт меньше",
+    "look": "осмотреть корову, проверить поилку",
+    "strong": [],
+    "notable": []
+   },
+   {
+    "metric": "drinker_share",
+    "side": "up",
+    "name": "Чаще у поилки",
+    "look": "проверить жару в коровнике и температуру коровы",
+    "strong": [],
+    "notable": [
+     {
+      "cow_id": "C02",
+      "status": "ok",
+      "metric": "drinker_share",
+      "side": "up",
+      "name": "Чаще у поилки",
+      "look": "проверить жару в коровнике и температуру коровы",
+      "level": "notable",
+      "delta_pct": 105.9,
+      "z": 3.05,
+      "value": 0.03623718887262079,
+      "norm": 0.017603365772091165
+     }
+    ]
+   },
+   {
+    "metric": "activity_rate",
+    "side": "up",
+    "name": "Больше двигается",
+    "look": "признак охоты или беспокойства",
+    "strong": [],
+    "notable": [
+     {
+      "cow_id": "C08",
+      "status": "watch",
+      "metric": "activity_rate",
+      "side": "up",
+      "name": "Больше двигается",
+      "look": "признак охоты или беспокойства",
+      "level": "notable",
+      "delta_pct": 86.3,
+      "z": 3.76,
+      "value": 112.87127405443829,
+      "norm": 60.57498601021513
+     }
+    ]
+   },
+   {
+    "metric": "resting_share",
+    "side": "down",
+    "name": "Почти не ложится",
+    "look": "посмотреть подстилку, ноги, беспокойство",
+    "strong": [],
+    "notable": []
+   },
+   {
+    "metric": "feeder_share",
+    "side": "up",
+    "name": "Дольше у корма",
+    "look": "проверить, хватает ли корма и места у стола",
+    "strong": [],
+    "notable": []
+   }
+  ],
+  "not_measured": [
+   {
+    "key": "lameness",
+    "name": "Хромает",
+    "what": "оценка походки в проходе",
+    "unit": "балл",
+    "source": "камера сбоку или сверху над проходом",
+    "status": "не сделано",
+    "look_at": "копыта, суставы"
+   },
+   {
+    "key": "body_condition",
+    "name": "Исхудала",
+    "what": "упитанность по силуэту сверху",
+    "unit": "балл",
+    "source": "камера сверху в проходе",
+    "status": "не сделано",
+    "look_at": "рацион, зубы, паразиты"
+   },
+   {
+    "key": "isolation",
+    "name": "Держится отдельно",
+    "what": "время вдали от стада",
+    "unit": "%",
+    "source": "камера над загоном",
+    "status": "не сделано",
+    "look_at": "общее состояние"
+   }
+  ],
+  "herd_events": [],
+  "indicators": [
+   {
+    "key": "feeder_share",
+    "name": "Ест",
+    "what": "доля времени у кормового стола",
+    "unit": "%",
+    "source": "камера над кормовым столом",
+    "status": "работает",
+    "look_at": "аппетит, жвачка, наполнение рубца, вымя, копыта"
+   },
+   {
+    "key": "resting_share",
+    "name": "Лежит",
+    "what": "доля времени без движения вне корма и воды",
+    "unit": "%",
+    "source": "камера над загоном",
+    "status": "работает",
+    "look_at": "встаёт ли охотно, ноги и копыта, температура"
+   },
+   {
+    "key": "drinker_share",
+    "name": "Пьёт",
+    "what": "доля времени у поилки",
+    "unit": "%",
+    "source": "камера над поилкой",
+    "status": "работает",
+    "look_at": "поилка исправна, жара в коровнике, температура"
+   },
+   {
+    "key": "activity_rate",
+    "name": "Двигается",
+    "what": "пройденный путь за час наблюдения",
+    "unit": "м/ч",
+    "source": "любая камера с калибровкой",
+    "status": "работает",
+    "look_at": "походка, копыта; резкий рост — признак охоты"
+   },
+   {
+    "key": "lameness",
+    "name": "Хромает",
+    "what": "оценка походки в проходе",
+    "unit": "балл",
+    "source": "камера сбоку или сверху над проходом",
+    "status": "не сделано",
+    "look_at": "копыта, суставы"
+   },
+   {
+    "key": "body_condition",
+    "name": "Исхудала",
+    "what": "упитанность по силуэту сверху",
+    "unit": "балл",
+    "source": "камера сверху в проходе",
+    "status": "не сделано",
+    "look_at": "рацион, зубы, паразиты"
+   },
+   {
+    "key": "milk_kg",
+    "name": "Удой",
+    "what": "суточный удой",
+    "unit": "кг",
+    "source": "доильная установка или ERP (импорт)",
+    "status": "работает",
+    "look_at": "вымя, аппетит, рацион"
+   },
+   {
+    "key": "isolation",
+    "name": "Держится отдельно",
+    "what": "время вдали от стада",
+    "unit": "%",
+    "source": "камера над загоном",
+    "status": "не сделано",
+    "look_at": "общее состояние"
+   }
+  ],
+  "status_label": {
+   "ok": "в норме",
+   "watch": "на заметку",
+   "alert": "проверить",
+   "estrus": "признаки охоты",
+   "insufficient": "мало данных",
+   "learning": "набирается норма"
+  },
+  "sign_names": {
+   "feeder_share:down": "Ест меньше",
+   "resting_share:up": "Дольше лежит",
+   "activity_rate:down": "Меньше двигается",
+   "milk_kg:down": "Удой ниже",
+   "drinker_share:down": "Пьёт меньше",
+   "drinker_share:up": "Чаще у поилки",
+   "activity_rate:up": "Больше двигается",
+   "resting_share:down": "Почти не ложится",
+   "feeder_share:up": "Дольше у корма"
+  },
+  "thresholds": {
+   "min_effect_pct": 12.0,
+   "z_notable": 2.0,
+   "z_strong": 4.0,
+   "cusum_h": 2.5,
+   "min_observed_h": 1.0
+  }
+ },
+ "summary": {
+  "camera_id": "mmcows-sensors",
+  "database": "var\\mmcows.sqlite",
+  "animals": 10,
+  "days": [
+   "2023-07-22",
+   "2023-07-23",
+   "2023-07-24",
+   "2023-07-25",
+   "2023-07-26",
+   "2023-07-27",
+   "2023-07-28",
+   "2023-07-29",
+   "2023-07-30",
+   "2023-07-31",
+   "2023-08-01",
+   "2023-08-02",
+   "2023-08-03"
+  ],
+  "events_by_status": {
+   "new": 9
+  },
+  "last_run": null
+ },
+ "reid": {
+  "rank1": 0.9853,
+  "rank5": 0.9965,
+  "mAP": 0.9305,
+  "n_query": 1157,
+  "n_gallery": 1323,
+  "n_test_identities": 53,
+  "tar@far0.01": 0.6292,
+  "tar@far0.05": 0.8617,
+  "tar@far0.1": 0.9153,
+  "unknown_distance_at_far1": 0.2959,
+  "split": {
+   "train_images": 5322,
+   "train_identities": 126,
+   "gallery_images": 1323,
+   "query_images": 1157,
+   "test_identities": 53,
+   "identity_overlap": 0
+  },
+  "trained_epoch": 10
+ },
+ "video": {
+  "clips": 301,
+  "frames_processed": 24786,
+  "seconds": 1047.5,
+  "fps": 23.7,
+  "tracks": 585,
+  "identified": 174,
+  "unknown": 411,
+  "cows_named": 67,
+  "conflicts": 0,
+  "tracks_in_conflict": 0,
+  "min_track_frames": 8,
+  "identified_seen_in_training": 160,
+  "identified_unseen_in_training": 14
+ }
+}

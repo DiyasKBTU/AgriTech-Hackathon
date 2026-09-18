@@ -1,0 +1,32 @@
+# COW ID — всё для работы и проверки кода. Установка с нуля — README.md.
+#
+# torch и torchvision ставятся ДО этого файла, под свою видеокарту:
+#   видеокарта NVIDIA (RTX 50xx, CUDA 12.8):
+#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#   без видеокарты:
+#     pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# Ядро: конвейер, база, платформа.
+numpy>=1.26
+opencv-python-headless>=4.9
+scipy>=1.11
+pyyaml>=6.0
+pydantic>=2.5
+fastapi>=0.110
+uvicorn[standard]>=0.27
+typer>=0.12
+rich>=13.7
+
+# Модели: детекция и узнавание.
+ultralytics>=8.3
+pillow>=10.0
+# Демо-ролики (cowid demo-video).
+imageio-ffmpeg>=0.5
+# Метрики трекинга: IDF1, MOTA, подмены номера (cowid farm-chain).
+motmetrics>=1.4
+
+# Проверка кода (pytest).
+pytest>=8.0
+httpx>=0.27
+
+# Чтение настоящих ушных бирок — необязательно: pip install easyocr

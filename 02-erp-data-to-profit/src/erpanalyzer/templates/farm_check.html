@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% set page = 'check' %}
+{% block title %}Результат проверки{% endblock %}
+{% block main %}
+<p class="step">Шаг 2 из 2 · Результат · <a href="/{{ fid }}">к данным</a></p>
+<h1>Результат проверки</h1>
+<p class="muted">{{ f.card.name }}. Под каждым ответом — как он посчитан и из каких данных.</p>
+
+<div class="results">
+  {% for r in results %}
+  <section class="panel result">
+    <h2>{{ r.title }}</h2>
+    <p class="value">{{ r.value }}</p>
+    <p>{{ r.text }}</p>
+    <a href="#{{ r.id }}" class="small">как посчитано ↓</a>
+  </section>
+  {% endfor %}
+</div>
+
+<section class="panel">
+  <h2>Что сделать</h2>
+  <ol class="todo">
+    {% for x in todo %}
+    <li>
+      <div class="todo-head"><b>{{ x.label }}</b>{% if x.money and x.kind != 'cost' %}<span class="gain">+{{ x.money|amt }}</span>{% endif %}</div>
+      <div class="muted">{{ x.action }}</div>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+
+<h2 class="sec" id="credit">Кредит: как посчитано</h2>
+<section class="panel">
+  <table class="calc">
+    <thead><tr><th>Что считаем</th><th>Откуда данные</th><th>Расчёт</th><th class="n">Результат</th></tr></thead>
+    <tbody>
+    {% for what, src, how, res in steps %}
+    <tr class="{{ 'total' if loop.last }}"><td><b>{{ what }}</b></td><td class="muted">{{ src }}</td><td>{{ how }}</td><td class="n">{{ res }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Хватит ли денег на платежи в плохой год</h2>
+  <p class="muted small">Берём настоящие скачки цен из статистики и пересчитываем, сколько денег останется за год.
+    Платежи по кредитам — те же.</p>
+  <table>
+    <thead><tr><th>Что случилось</th><th>Откуда цифра</th><th class="n">Останется денег</th><th class="n">Платежи</th><th>Итог</th></tr></thead>
+    <tbody>
+    {% for name, src, money, d, pays in bad %}
+    <tr><td>{{ name }}</td><td class="muted">{{ src }}</td><td class="n">{{ money|mln }} млн</td><td class="n">{{ pays|mln }} млн</td>
+      <td class="{{ 'ok' if d >= 1.2 else ('mid' if d >= 1 else 'no') }}">{{ d|enough }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Оценка хозяйства: {{ pr.score|round|int }} из 100 — {{ k.CLASS_WORDS[pr.klass] }}</h2>
+  <p class="muted small">12 показателей из данных ERP. Каждый сравниваем с нормой и ставим 0–100 баллов. Итог — среднее
+    с весами: у денег вес больше. 80 и выше — надёжное, 65 — устойчивое, 50 — с рисками, ниже — высокий риск.</p>
+  <details>
+    <summary>Все 12 показателей</summary>
+    <table class="small">
+      <thead><tr><th>Показатель</th><th>У хозяйства</th><th>Норма</th><th class="n">Баллы</th><th class="n">Вес</th></tr></thead>
+      <tbody>{% for i in ind %}
+      <tr><td>{{ i.name }}</td><td>{{ i.shown }}</td><td class="muted">{{ i.norm }}</td>
+        <td class="n {{ 'no' if i.points < 40 }}">{{ i.points }}</td><td class="n">{{ i.weight }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </details>
+</section>
+
+<h2 class="sec" id="subs">Субсидии: как посчитано</h2>
+{% for l in subs.lines if l.kind != 'info' %}
+<section class="panel">
+  <h2>{{ l.name }} <span class="src">{{ l.rate_text }} · приказ Минсельхоза № 108</span></h2>
+  <p class="muted small">Условия: {{ l.terms }}.</p>
+  {% if l.calc %}<p>{{ l.calc }}</p>{% endif %}
+  {% if l.kind == 'due' %}
+  <table class="kv"><tbody>
+    <tr><td>Проходят все условия</td><td>{{ l.heads_ok }} гол. → положено <b>{{ l.amount|amt }}</b></td></tr>
+    {% for r in l.reasons %}
+    <tr><td class="{{ 'no' if r.fixable }}">{{ r.text|cap }}</td><td>{{ r.heads }} гол. → {{ 'можно потерять' if r.fixable else 'не положено' }} {{ r.amount|amt }}</td></tr>
+    {% endfor %}
+  </tbody></table>
+  {% elif l.kind == 'option' %}
+  <p>Можно получить: <b>{{ l.amount|amt }}</b>. {{ l.note }}.</p>
+  {% elif l.kind == 'supplier' %}
+  <p>{{ l.note|cap }}. Не переоформлено: {{ l.heads_risk }} гол. × 75 000 ₸ = <b>{{ l.blocked_amount|amt }}</b>.</p>
+  {% endif %}
+  {% if l.rows %}
+  <details>
+    <summary>Проверка каждой головы: {{ l.rows|length }}</summary>
+    <div class="scroll">
+    <table class="small">
+      <thead><tr><th>Бирка</th><th>Родился</th><th class="n">Возраст к продаже, мес.</th><th class="n">Вес к продаже, кг</th><th>Проверка</th><th class="n">Сумма, ₸</th></tr></thead>
+      <tbody>{% for r in l.rows %}
+      <tr><td>{{ r.tag }}</td><td>{{ r.born }}</td><td class="n">{{ r.age }}</td><td class="n">{{ r.kg }}</td>
+        <td class="{{ 'ok' if r.status == 'проходит' else 'no' }}">{{ r.status }}</td><td class="n">{{ r.pay|tg }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    </div>
+  </details>
+  {% endif %}
+</section>
+{% endfor %}
+
+<h2 class="sec" id="coll">Залог: как проверено</h2>
+<section class="panel">
+  {% if chk.connected %}
+  <p>Берём бирки коров из ERP, которые стоят под камерой, и спрашиваем систему наблюдения из нашего CV-трека,
+    видела ли она их на месте за сутки {{ chk.day }}.</p>
+  <table>
+    <thead><tr><th>Бирка в ERP</th><th>Корова в системе камеры</th><th>Результат</th></tr></thead>
+    <tbody>{% for r in chk.rows %}
+    <tr><td>{{ r.tag }}</td><td>{{ r.cv_id }}</td><td class="{{ 'ok' if r.seen else 'no' }}">{{ 'на месте' if r.seen else 'не видели' }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  <p class="muted small">Источник: {{ chk.source }}{% if not chk.live %} (сохранённый снимок){% endif %}.</p>
+  {% else %}
+  <p>Камеры у хозяйства нет — проверить, что скот на месте, нечем. Банк видит скот только по записям в ERP.</p>
+  {% endif %}
+  <p>Стадо по ценам региона стоит {{ pr.herd_value|mln }} млн ₸; в залог банк берёт половину — {{ pr.limit_collateral|mln }} млн ₸.</p>
+</section>
+
+<p class="actions"><a class="btn" href="/bank/{{ fid }}">Отправить справку в банк</a>
+  <span class="muted">В демо — открывает экран банка.</span></p>
+{% endblock %}

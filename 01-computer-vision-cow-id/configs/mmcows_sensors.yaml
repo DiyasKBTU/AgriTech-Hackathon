@@ -1,0 +1,10 @@
+# Платформа на реальных суточных данных MmCows (датчики, 10 коров, 13 суток).
+# Заполнить базу: cowid import-mmcows
+# Открыть:        cowid serve --config configs/mmcows_sensors.yaml
+camera_id: mmcows-sensors
+farm:
+  # Карточки коров — реальные записи фермы (отёлы, стельность, хромота) на выбранные сутки.
+  registry: mmcows
+storage:
+  database: var/mmcows.sqlite
+  evidence_dir: var/evidence_mmcows

@@ -1,0 +1,30 @@
+[project]
+name = "erpanalyzer"
+version = "0.1.0"
+description = "ERPAnalyzer: проверка данных ERP хозяйства для льготного кредита и субсидий"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.1", "numpy>=1.26", "openpyxl>=3.1", "xlrd>=2.0",
+    "fastapi>=0.110", "uvicorn>=0.27", "jinja2>=3.1",
+    "python-pptx>=1.0", "pillow>=10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[project.scripts]
+erpanalyzer = "erpanalyzer.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+erpanalyzer = ["static/*", "templates/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

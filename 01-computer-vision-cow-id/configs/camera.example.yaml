@@ -1,0 +1,92 @@
+camera_id: camera-1
+farm:
+  registry: null
+  as_of: null
+  hourly_norms: null
+zone_masks: null
+video:
+  frame_stride: 5
+  fallback_fps: 25.0
+detector:
+  model: models/detector/cow_obb.pt
+  class_ids: []
+  conf: 0.35
+  iou: 0.5
+  imgsz: 640
+  device: auto
+  tiles: 1
+tracker:
+  match_iou: 0.3
+  appearance_weight: 0.2
+  appearance_gate: 0.08
+  max_reassoc_px_per_frame: 30.0
+  center_gate_ratio: 0.35
+  max_age: 30
+  min_hits: 3
+embedder:
+  kind: learned
+  weights: models/reid/encoder.pt
+  grid:
+  - 6
+  - 3
+  device: auto
+tag_ocr:
+  kind: none
+  min_confidence: 0.6
+  pattern: ^[A-Z]{0,3}-?\d{3,12}$
+gallery:
+  unknown_distance: 0.3
+  max_per_cow: 64
+  min_tag_reads_to_enroll: 3
+  vote_ratio: 0.5
+  vote_window: 0
+activity:
+  position_point: center
+  still_move_px: 1.5
+  smooth_window: 5
+baseline:
+  min_days: 5
+  window_days: 14
+  min_observed_seconds: 3600.0
+  min_effect_pct: 12.0
+  z_warning: 2.0
+  z_strong: 5.0
+  z_estrus: 3.0
+  z_single: 4.0
+  single_min_effect_pct: 25.0
+  cusum_k: 1.5
+  cusum_h: 2.5
+  prior_relative_spread: 0.15
+  prior_weight_days: 7.0
+  herd_adjust: true
+  herd_min_cows: 5
+  herd_event_pct: 8.0
+calibration:
+  pixels_per_meter: 40.0
+  homography: null
+storage:
+  database: var/cowid.sqlite
+  evidence_dir: var/evidence
+zones:
+- name: feeder
+  polygon:
+  - - 0.0
+    - 0.0
+  - - 640.0
+    - 0.0
+  - - 640.0
+    - 120.0
+  - - 0.0
+    - 120.0
+  min_visit_seconds: 20.0
+- name: drinker
+  polygon:
+  - - 560.0
+    - 300.0
+  - - 640.0
+    - 300.0
+  - - 640.0
+    - 420.0
+  - - 560.0
+    - 420.0
+  min_visit_seconds: 20.0

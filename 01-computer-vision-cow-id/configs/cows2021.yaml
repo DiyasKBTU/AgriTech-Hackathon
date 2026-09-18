@@ -1,0 +1,30 @@
+# Камера из датасета Cows2021: сверху над проходом, 1280x720, 30 кадров/с.
+# Используется для прогона `cowid check-video` на реальных роликах.
+# Бирки в этих роликах не читаются, поэтому коровы регистрируются по фото:
+#   cowid enroll --data "data/real/cows2021/4vnrca7qw1642qlwxjadp87h7/Sub-levels/Identification/Test" --config configs/cows2021.yaml
+camera_id: cows2021
+video:
+  # Ролики по 5 секунд: берём каждый второй кадр, чтобы дорожки были длиннее.
+  frame_stride: 2
+  fallback_fps: 30.0
+detector:
+  model: models/detector/cow_obb.pt
+  class_ids: []
+  conf: 0.35
+  iou: 0.5
+  imgsz: 640
+  device: auto
+embedder:
+  kind: learned
+  weights: models/reid/encoder.pt
+  device: auto
+tag_ocr:
+  kind: none
+gallery:
+  unknown_distance: 0.30
+  max_per_cow: 64
+  vote_ratio: 0.5
+storage:
+  database: var/cows2021.sqlite
+  evidence_dir: var/evidence_cows2021
+zones: []

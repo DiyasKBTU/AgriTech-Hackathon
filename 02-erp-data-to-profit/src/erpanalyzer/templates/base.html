@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{% endblock %} — {{ k.NAME }}</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="logo" href="/">{{ k.NAME }}</a>
+    <span class="product">модуль для ERP хозяйства</span>
+    <nav class="roles">
+      <a href="/{{ fid or 'f1' }}" class="{{ 'on' if role == 'farm' }}">Хозяйство</a>
+      <a href="/bank" class="{{ 'on' if role == 'bank' }}">Банк</a>
+    </nav>
+  </div>
+</header>
+{% if role == 'farm' %}
+<div class="farms">
+  <div class="wrap">
+    {% for g in farms.values() %}
+    <a href="/{{ g.fid }}{{ '/check' if page == 'check' }}" class="{{ 'on' if g.fid == fid }}">{{ g.card.name }}</a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+<main class="wrap">
+{% block main %}{% endblock %}
+</main>
+<footer class="wrap">{{ k.HONEST }}</footer>
+</body>
+</html>

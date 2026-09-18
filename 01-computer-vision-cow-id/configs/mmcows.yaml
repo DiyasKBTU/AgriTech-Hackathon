@@ -1,0 +1,49 @@
+# Ферма из датасета MmCows (США): 4 камеры под наклоном в одном кадре 3840x2400,
+# кадр раз в 15 секунд. Детектор «вид сверху» из Cows2021 здесь не работает
+# (находит 1% коров), готовая COCO — 36%. Поэтому детектор дообучен на утренних
+# кадрах этой фермы (`cowid mmcows-detector`): классы «стоит» и «лежит».
+# Кадр режется на 4 плитки — по одной на камеру, как при обучении.
+# Узнавание дообучено на 16 коровах этой фермы по кадрам 03–12 ч
+# (`cowid farm-chain`); галерея — var/gallery_mmcows.json из тех же часов.
+camera_id: mmcows
+farm:
+  # Карточки коров — реальные записи фермы на день съёмки (registry.py).
+  registry: mmcows
+  as_of: "2023-07-25"
+  # Обычные часы коров C01–C10 — по датчикам за 13 суток (mmcows.hourly_norms).
+  hourly_norms: mmcows
+# Кормовой стол и поилка — клетки, найденные по разметке «ест/пьёт» 03–12 ч.
+zone_masks: models/reid_mmcows/zones.npz
+video:
+  frame_stride: 1
+  fallback_fps: 1.0
+detector:
+  model: models/detector_mmcows/cow_lying.pt
+  class_ids: []
+  conf: 0.35
+  iou: 0.5
+  imgsz: 1280
+  device: auto
+  tiles: 2
+tracker:
+  # 15 секунд между кадрами: корова успевает сместиться, поэтому внешность
+  # весит больше геометрии. Подобрано на кадрах 12–14 ч (`cowid farm-chain`).
+  match_iou: 0.35
+  max_age: 4
+  min_hits: 1
+  appearance_weight: 0.8
+embedder:
+  kind: learned
+  weights: models/reid_mmcows/encoder.pt
+  device: auto
+gallery:
+  # Порог «не знаю» и окно голосов выбраны на кадрах 12–14 ч по IDF1 номера.
+  unknown_distance: 0.7
+  max_per_cow: 300
+  vote_window: 8
+tag_ocr:
+  kind: none
+storage:
+  database: var/mmcows_video.sqlite
+  evidence_dir: var/evidence_mmcows
+zones: []

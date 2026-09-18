@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% set page = 'data' %}
+{% block title %}Данные из ERP{% endblock %}
+{% block main %}
+<p class="step">Шаг 1 из 2 · Данные</p>
+<h1>{{ f.card.name }}</h1>
+<p class="muted">{{ f.card.kind }}, {{ f.card.region }} область. Ниже — данные, которые модуль взял из ERP
+  хозяйства и из внешних источников. По ним и идёт проверка.</p>
+
+<div class="actions top-actions"><a class="btn" href="/{{ fid }}/check">Проверить хозяйство</a></div>
+
+<section class="panel">
+  <h2>Заявка на кредит <span class="src">ERP · заявка</span></h2>
+  <table class="kv"><tbody>
+    <tr><td>Сумма</td><td>{{ f.card.loan.amount|tg }} ₸</td></tr>
+    <tr><td>Срок и ставка</td><td>{{ f.card.loan.months }} мес., {{ (f.card.loan.rate * 100)|round|int }}% годовых — {{ f.card.loan.program.split(':')[0] }}</td></tr>
+    <tr><td>На что</td><td>{{ f.card.loan.purpose }}</td></tr>
+  </tbody></table>
+</section>
+
+<section class="panel">
+  <h2>Деньги за последние 12 месяцев <span class="src">ERP · финансы</span></h2>
+  <table>
+    <thead><tr><th>Месяц</th><th class="n">Выручка, ₸</th><th class="n">Расходы, ₸</th><th class="n">Платёж по кредитам, ₸</th></tr></thead>
+    <tbody>
+    {% for m, rev, exp, debt in d.fin %}
+    <tr><td>{{ m }}</td><td class="n">{{ rev|tg }}</td><td class="n">{{ exp|tg }}</td><td class="n">{{ debt|tg }}</td></tr>
+    {% endfor %}
+    <tr class="total"><td>Итого</td><td class="n">{{ d.fin_total[0]|tg }}</td><td class="n">{{ d.fin_total[1]|tg }}</td><td class="n">{{ d.fin_total[2]|tg }}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Животные <span class="src">ERP · реестр животных</span></h2>
+  <p>В реестре {{ d.animals|length }} записей{% if d.issues %}, у {{ d.issues }} есть замечание (нет бирки, нет в ИСЖ или нет акта взвешивания){% endif %}.
+    Живой вес по сводке стада за последний месяц: КРС — {{ (d.herd.cattle_kg / 1000)|dec }} т{% if d.herd.sheep_kg %},
+    овцы — {{ (d.herd.sheep_kg / 1000)|dec }} т{% endif %}. По нему считаем, сколько стоит стадо.</p>
+  <table>
+    <thead><tr><th>Вид</th><th>Группа</th><th class="n">Голов</th></tr></thead>
+    <tbody>{% for sp, gr, n in d.groups %}<tr><td>{{ sp }}</td><td>{{ gr }}</td><td class="n">{{ n }}</td></tr>{% endfor %}</tbody>
+  </table>
+  <details>
+    <summary>Весь реестр: {{ d.animals|length }} записей</summary>
+    <div class="scroll">
+    <table class="small">
+      <thead><tr><th>Бирка</th><th>Вид</th><th>Пол</th><th>Группа</th><th>Родился</th><th class="n">Вес, кг</th><th>Племенной</th><th>Замечание</th></tr></thead>
+      <tbody>
+      {% for a in d.animals %}
+      <tr><td>{{ a.tag }}</td><td>{{ a.species }}</td><td>{{ 'м' if a.sex == 'M' else 'ж' }}</td>
+        <td>{{ a.group }}</td><td>{{ a.born }}</td><td class="n">{{ a.weight_kg|int }}</td><td>{{ a.pedigree }}</td>
+        <td class="{{ 'no' if a.issue }}">{{ a.issue }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </details>
+</section>
+
+<section class="panel">
+  <h2>Корма <span class="src">ERP · кормление и склад</span></h2>
+  <details>
+    <summary>Сено по месяцам за 12 месяцев</summary>
+    <table class="small">
+      <thead><tr><th>Месяц</th><th class="n">Съели, т</th><th class="n">На складе, т</th><th class="n">Цена, ₸/кг</th></tr></thead>
+      <tbody>{% for m, use, stock, p in d.feed %}
+      <tr><td>{{ m }}</td><td class="n">{{ (use / 1000)|round|int }}</td><td class="n">{{ (stock / 1000)|round|int }}</td><td class="n">{{ p|dec }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </details>
+</section>
+
+<section class="panel">
+  <h2>Цены <span class="src">статистика stat.gov.kz</span></h2>
+  <table>
+    <thead><tr><th>Что</th><th>Последний месяц</th><th class="n">Цена, ₸/кг</th></tr></thead>
+    <tbody>{% for name, m, p in d.prices %}<tr><td>{{ name }}</td><td>{{ m }}</td><td class="n">{{ p|dec }}</td></tr>{% endfor %}</tbody>
+  </table>
+  <p class="muted small">Для «плохого года» берём настоящие скачки цен из тех же рядов:
+    сено {{ shocks.hay_2021[1] }} → {{ shocks.hay_2021[2] }}: +{{ (shocks.hay_2021[0] * 100)|round|int }}% (засуха 2021);
+    ячмень {{ shocks.barley_12m[1] }} → {{ shocks.barley_12m[2] }}: +{{ (shocks.barley_12m[0] * 100)|round|int }}%.</p>
+</section>
+
+<section class="panel">
+  <h2>Камера <span class="src">наш CV-трек{% if not chk.get('live') and chk.connected %} · сохранённый снимок{% endif %}</span></h2>
+  {% if chk.connected %}
+  <table>
+    <thead><tr><th>Бирка в ERP</th><th>Корова в системе камеры</th><th>За сутки {{ chk.day }}</th></tr></thead>
+    <tbody>{% for r in chk.rows %}
+    <tr><td>{{ r.tag }}</td><td>{{ r.cv_id }}</td><td class="{{ 'ok' if r.seen else 'no' }}">{{ 'видели на месте' if r.seen else 'не видели' }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% else %}<p>У хозяйства нет камеры.</p>{% endif %}
+</section>
+
+<p class="actions"><a class="btn" href="/{{ fid }}/check">Проверить хозяйство</a></p>
+{% endblock %}

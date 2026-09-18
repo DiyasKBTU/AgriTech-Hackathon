@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Заявки{% endblock %}
+{% block main %}
+<h1>Заявки на кредит</h1>
+<p class="muted">Каждая заявка приходит со справкой из проверенных данных учёта хозяйства.</p>
+
+<section class="panel">
+  <table class="list">
+    <thead><tr><th>Хозяйство</th><th class="n">Просит</th><th class="n">Можно дать</th><th>Оценка</th><th>Главное</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr>
+      <td><a href="/bank/{{ r.f.fid }}">{{ r.f.card.name }}</a></td>
+      <td class="n">{{ r.f.card.loan.amount|mln }} млн ₸</td>
+      <td class="n">{{ r.pr.limit|mln }} млн ₸</td>
+      <td class="grade-{{ r.pr.klass }}">{{ r.word }}</td>
+      <td>{{ r.why }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

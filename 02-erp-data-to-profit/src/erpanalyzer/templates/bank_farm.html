@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Справка по заявке{% endblock %}
+{% block main %}
+<p class="step"><a href="/bank">← все заявки</a></p>
+<h1>Справка по заявке</h1>
+<p class="muted">{{ f.card.name }}, {{ f.card.region }} область. Просит {{ f.card.loan.amount|mln }} млн ₸ на
+  {{ f.card.loan.months }} мес. — {{ f.card.loan.purpose.split(' (')[0] }}. Справка собрана из данных учёта хозяйства.</p>
+
+<div class="results">
+  {% for r in results %}
+  <section class="panel result">
+    <h2>{{ r.title }}</h2>
+    <p class="value">{{ r.value }}</p>
+    <p>{{ r.text }}</p>
+  </section>
+  {% endfor %}
+</div>
+
+<div class="two">
+  <section class="panel">
+    <h2>Почему такая оценка — {{ pr.score|round|int }} из 100</h2>
+    {% if why %}
+    <ul>{% for w in why %}<li>{{ w }}</li>{% endfor %}</ul>
+    {% else %}<p>Замечаний нет.</p>{% endif %}
+  </section>
+  <section class="panel">
+    <h2>Хватит ли денег на платежи</h2>
+    <table>
+      <tbody>
+      {% for name, src, money, d, pays in bad %}
+      <tr><td>{{ name }}</td><td class="{{ 'ok' if d >= 1.2 else ('mid' if d >= 1 else 'no') }}">{{ d|enough }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted small">Скачки цен — настоящие, из статистики stat.gov.kz.</p>
+  </section>
+</div>
+
+<section class="panel">
+  <h2>Как посчитана сумма</h2>
+  <table class="calc">
+    <thead><tr><th>Что считаем</th><th>Откуда данные</th><th>Расчёт</th><th class="n">Результат</th></tr></thead>
+    <tbody>
+    {% for what, src, how, res in steps %}
+    <tr class="{{ 'total' if loop.last }}"><td><b>{{ what }}</b></td><td class="muted">{{ src }}</td><td>{{ how }}</td><td class="n">{{ res }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<p class="muted small">Для системы банка то же самое — в виде данных: <a href="/api/profile/{{ fid }}">/api/profile/{{ fid }}</a></p>
+{% endblock %}
