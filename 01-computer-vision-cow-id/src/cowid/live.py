@@ -791,6 +791,9 @@ class LiveEngine:
             self._frame_event.wait(timeout)
             return self._jpeg
 
+    def latest_jpeg(self) -> Optional[bytes]:
+        return self._jpeg
+
     # -- цикл --------------------------------------------------------------
 
     def _loop(self, source: LiveSource, cfg: PipelineConfig, models: _Models) -> None:

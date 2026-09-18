@@ -814,11 +814,39 @@ async function pushFrames(video, token) {
   }
 }
 
+// Кадр идёт потоком mjpg. Если за 6 с не пришло ни одного кадра (антивирус или прокси
+// держат поток целиком, медленный первый кадр), берём последний кадр снимками.
+const STREAM_WAIT_MS = 6000;
+const SNAPSHOT_MS = 300;
+let snapshotToken = 0;
+
 function attachStream() {
   const box = document.getElementById("stream");
   if (!box) return;
-  box.innerHTML =
-    '<img alt="кадр с камеры с рамками коров" src="/api/live/stream.mjpg?t=' + Date.now() + '">';
+  const token = ++snapshotToken;
+  const img = new Image();
+  img.alt = "кадр с камеры с рамками коров";
+  img.src = "/api/live/stream.mjpg?t=" + Date.now();
+  box.replaceChildren(img);
+  setTimeout(() => {
+    if (token === snapshotToken && img.isConnected && !img.naturalWidth) pollSnapshots(img, token);
+  }, STREAM_WAIT_MS);
+}
+
+function pollSnapshots(img, token) {
+  const next = new Image();
+  next.alt = img.alt;
+  const again = (cur, ms) => setTimeout(() => {
+    if (token === snapshotToken && cur.isConnected) pollSnapshots(cur, token);
+  }, ms);
+  next.onload = () => {
+    if (token !== snapshotToken || !img.isConnected) return;
+    img.replaceWith(next);
+    img.removeAttribute("src");                     // обрывает поток mjpg, если он ещё открыт
+    again(next, SNAPSHOT_MS);
+  };
+  next.onerror = () => again(img, 1000);            // кадра ещё нет — сервер ответил 204
+  next.src = "/api/live/latest.jpg?t=" + Date.now();
 }
 
 const TRACK_ROWS = 15;

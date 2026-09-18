@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -280,5 +280,16 @@ def create_app(cfg: PipelineConfig) -> FastAPI:
 
         return StreamingResponse(frames(),
                                  media_type="multipart/x-mixed-replace; boundary=frame")
+
+    @app.get("/api/live/latest.jpg", include_in_schema=False)
+    def live_latest() -> Response:
+        """Последний кадр одним снимком — запасной путь, если поток mjpg не доходит
+        до страницы (антивирус или прокси держат поток, пока он не закончится)."""
+        from ..live import ENGINE
+
+        jpeg = ENGINE.latest_jpeg()
+        if jpeg is None:
+            return Response(status_code=204)
+        return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     return app
