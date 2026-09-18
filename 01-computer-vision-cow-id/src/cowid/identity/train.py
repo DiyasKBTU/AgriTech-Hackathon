@@ -151,13 +151,15 @@ def _make_dataset(samples: list[Sample], label_map: dict[str, int], image_size: 
 # Модель
 # --------------------------------------------------------------------------
 
-def _build_model(cfg: TrainConfig, n_classes: int):
+def _build_model(cfg: TrainConfig, n_classes: int, pretrained: bool = True):
+    """pretrained=False — когда веса сразу загружаются из своего файла:
+    тогда начальные веса ImageNet не нужны и не качаются из интернета."""
     import torch
     from torch import nn
     from torchvision import models
 
     builder = getattr(models, cfg.backbone)
-    net = builder(weights="DEFAULT")
+    net = builder(weights="DEFAULT" if pretrained else None)
     feature_dim = net.fc.in_features
     net.fc = nn.Identity()
 

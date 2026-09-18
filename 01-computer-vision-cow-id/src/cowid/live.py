@@ -42,6 +42,11 @@ COWS2021_VIDEOS = Path(
     "data/real/cows2021/4vnrca7qw1642qlwxjadp87h7/Sub-levels/Identification/Videos"
 )
 
+#: Ролик MmCows с 14:00 (кадр 3360) до конца суток, вырезан из полного без
+#: пережатия — кадры те же. Его привозит архив для другого компьютера.
+MMCOWS_FROM_14 = Path("data/real/mmcows_0725_from14.mp4")
+MMCOWS_FIRST_SHOWN = 3360
+
 #: Ролики Cows2021, где все коровы — из тех, на которых училась модель.
 KNOWN_CLIPS = [
     "2020-03-08_13-36-33", "2020-03-08_14-45-1", "2020-03-09_12-19-46",
@@ -75,6 +80,8 @@ class LiveSource:
     speed: float = 1.0
     #: С какого кадра начать первый проход по файлу.
     start_frame: int = 0
+    #: Номер первого кадра файла в полных сутках (у вырезанного ролика — не 0).
+    first_index: int = 0
     #: Сколько реальных секунд между кадрами, если видео снято с прореживанием
     #: (MmCows — кадр раз в 15 с). Тогда же показывается время суток.
     real_seconds_per_frame: Optional[float] = None
@@ -96,16 +103,20 @@ def available_sources() -> list[LiveSource]:
     from .datasets import archive_path, is_complete
 
     mmcows = archive_path("mmcows_video_0725")
+    # С 14:00: утренние кадры детектор видел при дообучении.
     if mmcows.exists() and is_complete("mmcows_video_0725"):
+        video = {"target": [str(mmcows)], "start_frame": MMCOWS_FIRST_SHOWN}
+    elif MMCOWS_FROM_14.exists():
+        video = {"target": [str(MMCOWS_FROM_14)], "first_index": MMCOWS_FIRST_SHOWN}
+    else:
+        video = None
+    if video:
         out.append(LiveSource(
             "demo_other_farm", "Демо: ферма MmCows — кто это и что это значит", "playlist",
-            [str(mmcows)],
-            "США, 4 камеры под наклоном, кадр раз в 15 с (сутки за 24 минуты), показ с 14:00. "
+            note="США, 4 камеры под наклоном, кадр раз в 15 с (сутки за 24 минуты), показ с 14:00. "
             "Детектор и узнавание дообучены на утренних кадрах этой фермы; 16 коров "
             "зарегистрированы, к каждой подтягивается карточка из реестра фермы.",
-            # С 14:00: утренние кадры детектор видел при дообучении.
-            config="configs/mmcows.yaml", speed=4.0, start_frame=3360,
-            real_seconds_per_frame=15.0))
+            config="configs/mmcows.yaml", speed=4.0, real_seconds_per_frame=15.0, **video))
     known = _clips(KNOWN_CLIPS)
     if known:
         out.append(LiveSource(
@@ -191,10 +202,10 @@ class _Reader(threading.Thread):
                 self.fps = fps
                 self.segment += 1
                 play_fps = fps * self.source.speed
-                idx = 0
+                idx = self.source.first_index
                 if first and self.source.start_frame:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, self.source.start_frame)
-                    idx = self.source.start_frame
+                    idx += self.source.start_frame
                 first = False
                 start_idx = idx
                 started = time.perf_counter()

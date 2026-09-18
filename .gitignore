@@ -6,3 +6,6 @@ __pycache__/
 
 # Исходные файлы цен stat.gov.kz (разобранные цены — в data/prices_kz.csv)
 02-erp-data-to-profit/data/raw/
+
+# Архив моделей, который скачивает start.ps1 (после распаковки удаляется)
+cowid-data.zip

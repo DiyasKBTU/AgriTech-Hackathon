@@ -283,7 +283,7 @@ class LearnedEmbedder:
         self.metrics = checkpoint.get("metrics", {})
 
         self.device = self._resolve_device(cfg.device)
-        encoder, _ = _build_model(train_cfg, n_classes=1)
+        encoder, _ = _build_model(train_cfg, n_classes=1, pretrained=False)
         encoder.load_state_dict(checkpoint["state_dict"])
         self.encoder = encoder.eval().to(self.device)
 
