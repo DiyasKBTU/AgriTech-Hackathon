@@ -185,7 +185,8 @@ cowid economics --herd 500
 
 ## Установка с нуля
 
-Сначала torch под свою видеокарту — команды в начале `requirements.txt`. Затем:
+Проще всего — `start.ps1` в корне проекта: ставит всё сам и скачивает модели
+(подробно — [../README.md](../README.md)). Вручную: сначала torch под свою видеокарту — команды в начале `requirements.txt`. Затем:
 
 ```bash
 python -m venv .venv

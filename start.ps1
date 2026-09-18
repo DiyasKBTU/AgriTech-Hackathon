@@ -56,7 +56,6 @@ function Install-Venv($dir, [scriptblock]$install) {
     try {
         if (-not (Test-Path ".venv\Scripts\python.exe")) { Run $py @("-m", "venv", ".venv") }
         $vpy = (Resolve-Path ".venv\Scripts\python.exe").Path
-        Run $vpy @("-m", "pip", "install", "--upgrade", "pip")
         & $install $vpy
         Set-Content -Path $marker -Value (Get-Date -Format s) -Encoding ascii
     } finally { Pop-Location }
