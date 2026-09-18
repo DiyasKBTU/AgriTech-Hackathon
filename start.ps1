@@ -106,7 +106,9 @@ if (-not $missing) {
     $ok = (Test-Path $zip) -and ((Get-FileHash $zip -Algorithm SHA256).Hash -eq $DataSha256)
     for ($try = 1; -not $ok -and $try -le 2; $try++) {
         Write-Host "Скачиваю 1,6 ГБ с GitHub (если прервётся — запустите снова, докачает)."
-        & curl.exe -L --fail --retry 5 -C - -o $zip $DataUrl
+        # Имя файла без пути: curl не открывает пути с русскими буквами (C:\Users\Диас\...).
+        Push-Location $Root
+        try { & curl.exe -L --fail --retry 5 -C - -o "cowid-data.zip" $DataUrl } finally { Pop-Location }
         $ok = (Test-Path $zip) -and ((Get-FileHash $zip -Algorithm SHA256).Hash -eq $DataSha256)
         if (-not $ok -and (Test-Path $zip)) {
             Write-Host "Контрольная сумма не совпала — скачиваю заново." -ForegroundColor Yellow
