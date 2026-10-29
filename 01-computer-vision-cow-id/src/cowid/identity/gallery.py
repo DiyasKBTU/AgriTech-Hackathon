@@ -164,3 +164,45 @@ class BiometricGallery:
                 cow_id: len(entry.embeddings) for cow_id, entry in sorted(self._entries.items())
             },
         }
+
+
+class PoseGallery:
+    """Портреты с позой: лежащая корова сравнивается с «лежачими» портретами
+    коров, стоящая — со «стоячими».
+
+    Лежащая корова за перилами стойла выглядит иначе, чем стоящая в проходе;
+    на MmCows (12–14 ч) так ошибок номера меньше, особенно вместе с правилом
+    «один номер — одна рамка». Файл: `emb`, `cows`, `lying` (npz).
+    """
+
+    def __init__(self, emb: np.ndarray, cows: np.ndarray, lying: np.ndarray, cfg: GalleryConfig):
+        self.cfg = cfg
+        emb = np.asarray(emb, dtype=np.float32)
+        self._by_pose = {pose: (emb[lying == pose], np.asarray(cows)[lying == pose])
+                         for pose in (False, True)}
+
+    @classmethod
+    def load(cls, path: str | Path, cfg: GalleryConfig) -> "PoseGallery":
+        with np.load(path) as data:
+            return cls(data["emb"], data["cows"], data["lying"].astype(bool), cfg)
+
+    def match_many(self, emb: np.ndarray, lying) -> list[Optional[str]]:
+        """Номер для каждой рамки кадра; дальше порога — «не знаю» (None)."""
+        emb = np.asarray(emb, dtype=np.float32).reshape(-1, self._by_pose[False][0].shape[1])
+        lying = np.asarray(lying, dtype=bool)
+        out: list[Optional[str]] = [None] * len(emb)
+        for pose in (False, True):
+            idx = np.flatnonzero(lying == pose)
+            matrix, ids = self._by_pose[pose]
+            if not len(idx) or not len(matrix):
+                continue
+            sims = emb[idx] @ matrix.T
+            best = sims.argmax(axis=1)
+            dist = 1.0 - sims[np.arange(len(idx)), best]
+            for i, b, d in zip(idx, best, dist):
+                out[i] = str(ids[b]) if d <= self.cfg.unknown_distance else None
+        return out
+
+    def match(self, embedding: np.ndarray, lying: bool) -> GalleryMatch:
+        cow = self.match_many(embedding, [lying])[0]
+        return GalleryMatch(cow_id=cow, distance=float("nan"), is_known=cow is not None)

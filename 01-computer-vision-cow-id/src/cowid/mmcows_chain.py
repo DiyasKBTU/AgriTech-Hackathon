@@ -43,10 +43,12 @@ import cv2
 import numpy as np
 
 from .detect.mmcows_detector import CAMS, SRC, read_labels, split_of
+from .identity.voting import assign_unique
 
 DET_IMAGES = Path("data/prepared/mmcows_det/images")   # 1600 px, кадр раз в минуту
 CROPS = Path("data/prepared/mmcows_reid")
 MODEL_DIR = Path("models/reid_mmcows")
+POSE_GALLERY = Path("var/gallery_mmcows_pose.npz")
 BASE_ENCODER = Path("models/reid/encoder.pt")          # узнавание по спине, Cows2021
 CACHE = Path("var/mmcows_chain")
 GALLERY = Path("var/gallery_mmcows.json")
@@ -64,6 +66,27 @@ OCCLUDED_IOU = 0.10
 MIN_VOTES = 3
 
 Log = Callable[[str], None]
+
+
+@dataclass(frozen=True)
+class Setup:
+    """Какие модели проверяются: узнавание, детектор, их кэш кадров и галереи.
+
+    По умолчанию — модели, с которыми считались цифры 17.09; другой набор
+    (например, детектор покрупнее) проверяется тем же кодом рядом, ничего не
+    перезаписывая.
+    """
+
+    model_dir: Path = MODEL_DIR
+    #: Детектор цифр 17.09 (YOLO26n); живой показ с 29.10 — на YOLO26s из
+    #: configs/mmcows.yaml. Пусто — тот, что в конфиге.
+    detector: str = "models/detector_mmcows/cow_lying.pt"
+    cache: Path = CACHE
+    gallery: Path = GALLERY
+    pose_gallery: Path = POSE_GALLERY
+
+
+BASE = Setup()
 
 
 def cow_name(n: int) -> str:
@@ -196,7 +219,8 @@ def _thin(items: list, per_cow: int, seed: int = 7) -> list:
 # 2. Дообучение узнавания на 16 коровах фермы
 # --------------------------------------------------------------------------
 
-def _splits(train_per_cow: int = 1200, gallery_per_cow: int = 150, val_per_cow: int = 300):
+def _splits(train_per_cow: int = 1200, gallery_per_cow: int = 150, val_per_cow: int = 300,
+            balance_pose: bool = False):
     from .identity.reid_dataset import ReidSplit, Sample
 
     def samples(items):
@@ -204,28 +228,37 @@ def _splits(train_per_cow: int = 1200, gallery_per_cow: int = 150, val_per_cow: 
 
     train = list_crops("train")
     gallery = _thin(train, gallery_per_cow)
-    fit_split = ReidSplit(train=samples(_thin(train, train_per_cow)),
+    if balance_pose:
+        # Поровну стоя и лёжа: подряд по времени лежачих вырезок втрое меньше,
+        # а ошибаются как раз на лежащих.
+        fit = [i for lying in (False, True)
+               for i in _thin([i for i in train if i.lying == lying], train_per_cow // 2)]
+    else:
+        fit = _thin(train, train_per_cow)
+    fit_split = ReidSplit(train=samples(fit),
                           gallery=samples(gallery), query=samples(list_crops("test")))
     select = ReidSplit(gallery=samples(gallery),
                        query=samples(_thin(list_crops("val"), val_per_cow)))
     return fit_split, select
 
 
-def train_reid(epochs: int = 8, log: Log = print) -> dict:
+def train_reid(epochs: int = 8, log: Log = print, setup: Setup = BASE,
+               balance_pose: bool = False) -> dict:
     """Дообучение кодировщика Cows2021 на утренних вырезках этой фермы."""
     from .identity.train import TrainConfig, fit
 
-    split, select = _splits()
+    split, select = _splits(balance_pose=balance_pose)
     log(f"обучение: {len(split.train)} вырезок, выбор эпохи: {len(select.query)}, "
         f"проверка: {len(split.query)} запросов против {len(split.gallery)} в галерее")
-    cfg = TrainConfig(data_root=str(CROPS), out_dir=str(MODEL_DIR), epochs=epochs,
+    cfg = TrainConfig(data_root=str(CROPS), out_dir=str(setup.model_dir), epochs=epochs,
                       lr=2e-4, batch_size=48, num_workers=4, split_by_time=False,
                       max_images_per_identity=None)
     init = str(BASE_ENCODER) if BASE_ENCODER.exists() else None
     report = fit(cfg, split, log=log, init_weights=init, select=select)
     report["note"] = ("Закрытое множество: те же 16 коров. Обучение 03–12 ч, выбор эпохи 12–14 ч, "
-                      "проверка 14–24 ч. Галерея — вырезки 03–12 ч.")
-    (MODEL_DIR / "training_report.json").write_text(
+                      "проверка 14–24 ч. Галерея — вырезки 03–12 ч."
+                      + (" Обучение — поровну стоя и лёжа." if balance_pose else ""))
+    (setup.model_dir / "training_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
 
@@ -316,14 +349,15 @@ def reid_checks(log: Log = print) -> dict:
     return report
 
 
-def unknown_threshold() -> float:
+def unknown_threshold(setup: Setup = BASE) -> float:
     """Порог «не знаю» — по части выбора эпохи (12–14 ч): чужая корова
     принимается за свою не чаще 1 раза из 100."""
-    report = json.loads((MODEL_DIR / "training_report.json").read_text(encoding="utf-8"))
+    report = json.loads((setup.model_dir / "training_report.json").read_text(encoding="utf-8"))
     return float(report["best"].get("unknown_distance_at_far1", 0.3))
 
 
-def enroll_gallery(threshold: float, per_cow: int = 300, log: Log = print) -> Path:
+def enroll_gallery(threshold: float, per_cow: int = 300, log: Log = print,
+                   setup: Setup = BASE) -> Path:
     """Галерея 16 коров из утренних вырезок — для проверки и живого показа."""
     import torch
 
@@ -332,7 +366,7 @@ def enroll_gallery(threshold: float, per_cow: int = 300, log: Log = print) -> Pa
     from .identity.train import load_encoder
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    encoder, _ = load_encoder(MODEL_DIR / "encoder.pt", device)
+    encoder, _ = load_encoder(setup.model_dir / "encoder.pt", device)
     items = _thin(list_crops("train"), per_cow)
     emb = _embed_paths(encoder, [i.path for i in items], device)
     gallery = BiometricGallery(GalleryConfig(unknown_distance=threshold, max_per_cow=per_cow))
@@ -341,10 +375,43 @@ def enroll_gallery(threshold: float, per_cow: int = 300, log: Log = print) -> Pa
         by_cow[it.cow].append(e)
     for cow, vectors in by_cow.items():
         gallery.enroll(cow, vectors, source="tag")
-    gallery.save(GALLERY)
+    gallery.save(setup.gallery)
     log(f"галерея: {gallery.size()} коров, {gallery.total_embeddings()} портретов, "
-        f"порог «не знаю» {threshold:.3f} → {GALLERY}")
-    return GALLERY
+        f"порог «не знаю» {threshold:.3f} → {setup.gallery}")
+    return setup.gallery
+
+
+def enroll_pose_gallery(per_cow: int = 300, log: Log = print, setup: Setup = BASE) -> Path:
+    """Галерея с позой: у каждой коровы до `per_cow` портретов стоя и столько же лёжа.
+
+    Лежащая корова за перилами стойла выглядит иначе, чем стоящая в проходе:
+    на 12–14 ч 72% ошибок номера — у лежащих. Сравнивать лежащую с её же
+    «лежачими» портретами честнее, чем со всеми подряд.
+    """
+    import torch
+
+    from .identity.train import load_encoder
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    encoder, _ = load_encoder(setup.model_dir / "encoder.pt", device)
+    train = list_crops("train")
+    items = [i for lying in (False, True) for i in _thin([i for i in train if i.lying == lying], per_cow)]
+    emb = _embed_paths(encoder, [i.path for i in items], device, batch=32)
+    setup.pose_gallery.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(setup.pose_gallery, emb=emb.astype(np.float16),
+                        cows=np.array([i.cow for i in items]), lying=np.array([i.lying for i in items]))
+    log(f"галерея с позой: {len(items)} портретов → {setup.pose_gallery}")
+    return setup.pose_gallery
+
+
+@lru_cache(maxsize=8)
+def pose_gallery(unknown_distance: float, setup: Setup = BASE):
+    from .config import GalleryConfig
+    from .identity.gallery import PoseGallery
+
+    if not setup.pose_gallery.exists():
+        enroll_pose_gallery(setup=setup)
+    return PoseGallery.load(setup.pose_gallery, GalleryConfig(unknown_distance=unknown_distance))
 
 
 # --------------------------------------------------------------------------
@@ -379,7 +446,8 @@ def _prefetch(paths: list[Path], pool: ThreadPoolExecutor, ahead: int = 24):
         yield p, fut.result()
 
 
-def run_frames(windows: tuple[str, ...] = ("val", "test"), log: Log = print) -> None:
+def run_frames(windows: tuple[str, ...] = ("val", "test"), log: Log = print,
+               setup: Setup = BASE) -> None:
     """Каждый кадр раз в 15 секунд: рамки, поза, отпечаток — в кэш по камерам."""
     import torch
     from PIL import Image
@@ -389,15 +457,16 @@ def run_frames(windows: tuple[str, ...] = ("val", "test"), log: Log = print) -> 
     from .identity.train import _build_transforms, load_encoder
 
     cfg = PipelineConfig.load(Path("configs/mmcows.yaml"))
-    det_cfg = cfg.detector.model_copy(update={"tiles": 1})
+    det_cfg = cfg.detector.model_copy(update={"tiles": 1, **({"model": setup.detector}
+                                                               if setup.detector else {})})
     detector = build_detector(det_cfg)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    encoder, _ = load_encoder(MODEL_DIR / "encoder.pt", device)
+    encoder, _ = load_encoder(setup.model_dir / "encoder.pt", device)
     tf = _build_transforms(224, train=False)
-    CACHE.mkdir(parents=True, exist_ok=True)
+    setup.cache.mkdir(parents=True, exist_ok=True)
 
     for cam in CAMS:
-        target = CACHE / f"{cam}.npz"
+        target = setup.cache / f"{cam}.npz"
         if target.exists():
             log(f"{cam}: уже посчитано")
             continue
@@ -449,11 +518,11 @@ class FrameData:
     brightness: float
 
 
-@lru_cache(maxsize=8)
-def load_cache(cam: str, window: str) -> tuple[FrameData, ...]:
+@lru_cache(maxsize=16)
+def load_cache(cam: str, window: str, cache: Path = CACHE) -> tuple[FrameData, ...]:
     # Каждое обращение data["…"] распаковывает массив из архива заново —
     # поэтому массивы читаются один раз.
-    with np.load(CACHE / f"{cam}.npz") as data:
+    with np.load(cache / f"{cam}.npz") as data:
         arr = {k: data[k] for k in data.files}
     emb = arr["emb"].astype(np.float32)
     out, pos = [], 0
@@ -529,6 +598,12 @@ class Variant:
     window: int = 0
     #: Настройки трекера поверх configs/mmcows.yaml, пары (имя, значение).
     tracker: tuple = ()
+    #: Один номер — одна рамка в камере (`identity.voting.assign_unique`) и
+    #: какая доля голосов нужна для номера.
+    unique: bool = False
+    min_share: float = 0.5
+    #: Лежащую сравнивать с её «лежачими» портретами, стоящую — со «стоячими».
+    pose_gallery: bool = False
 
 
 CAREFUL = "трекинг + внешность, осторожный порог «не знаю»"
@@ -581,7 +656,8 @@ def _decide(votes) -> Optional[str]:
     return None
 
 
-def _track_camera(frames: list[FrameData], gallery, variant: Variant, cfg_tracker):
+def _track_camera(frames: list[FrameData], gallery, variant: Variant, cfg_tracker,
+                  setup: Setup = BASE):
     """Прогон одной камеры. Для каждого кадра: [(рамка, номер трека, номер коровы, лежит)]."""
     from .track.tracker import CowTracker
     from .types import BBox, Detection
@@ -593,7 +669,9 @@ def _track_camera(frames: list[FrameData], gallery, variant: Variant, cfg_tracke
     out = []
     matrix, row_ids = _gallery_matrix(gallery)
     for idx, fr in enumerate(frames):
-        guess = _match_all(fr.emb, matrix, row_ids, gallery.cfg.unknown_distance)
+        guess = (pose_gallery(gallery.cfg.unknown_distance, setup).match_many(fr.emb, fr.lying)
+                 if variant.pose_gallery
+                 else _match_all(fr.emb, matrix, row_ids, gallery.cfg.unknown_distance))
         if not variant.use_tracking:
             out.append([(fr.boxes[i], None, guess[i], bool(fr.lying[i]))
                         for i in range(len(fr.boxes))])
@@ -615,10 +693,23 @@ def _track_camera(frames: list[FrameData], gallery, variant: Variant, cfg_tracke
             if i is not None:
                 weight = variant.lying_weight if fr.lying[i] else 1.0
                 votes[t.track_id].append((guess[i], weight))
-            cow = _decide(votes[t.track_id])
-            rows.append((box, t.track_id, cow, bool(fr.lying[i]) if i is not None else False))
-        out.append(rows)
+            rows.append((box, t.track_id, None, bool(fr.lying[i]) if i is not None else False))
+        if variant.unique:
+            tallies = [_tally(votes[tid]) for _, tid, _, _ in rows]
+            names = assign_unique([t for t, _ in tallies], [s for _, s in tallies],
+                                  MIN_VOTES, variant.min_share)
+        else:
+            names = [_decide(votes[tid]) for _, tid, _, _ in rows]
+        out.append([(box, tid, name, lie) for (box, tid, _, lie), name in zip(rows, names)])
     return out
+
+
+def _tally(votes) -> tuple[Counter, float]:
+    tally: Counter = Counter()
+    for cow, w in votes:
+        if cow is not None:
+            tally[cow] += w
+    return tally, sum(w for _, w in votes)
 
 
 MOT_COUNTS = ["num_frames", "idtp", "idfp", "idfn", "num_switches", "num_misses",
@@ -645,7 +736,7 @@ def _overall(df) -> dict:
 
 def evaluate_tracking(window: str = "test", unknown_distance: Optional[float] = None,
                       variants: tuple[Variant, ...] = VARIANTS,
-                      log: Log = print) -> tuple[dict, dict]:
+                      log: Log = print, setup: Setup = BASE) -> tuple[dict, dict]:
     """Метрики MOT (motmetrics) и точность номера по кадрам, по вариантам.
 
     Два уровня:
@@ -660,8 +751,8 @@ def evaluate_tracking(window: str = "test", unknown_distance: Optional[float] = 
     mm = _motmetrics()
     cfg = PipelineConfig.load(Path("configs/mmcows.yaml"))
     tcfg = cfg.tracker
-    gallery = BiometricGallery.load(GALLERY, cfg.gallery.model_copy(update={
-        "unknown_distance": unknown_distance if unknown_distance is not None else unknown_threshold(),
+    gallery = BiometricGallery.load(setup.gallery, cfg.gallery.model_copy(update={
+        "unknown_distance": unknown_distance if unknown_distance is not None else unknown_threshold(setup),
         "max_per_cow": 300}))
     zones = feed_zones()
     mh = mm.metrics.create()
@@ -673,8 +764,8 @@ def evaluate_tracking(window: str = "test", unknown_distance: Optional[float] = 
         by_group: dict[str, Counter] = defaultdict(Counter)
         slots: dict[tuple[int, str], list] = defaultdict(list)
         for cam in CAMS:
-            frames = load_cache(cam, window)
-            rows_all = _track_camera(frames, gallery, variant, tcfg)
+            frames = load_cache(cam, window, setup.cache)
+            rows_all = _track_camera(frames, gallery, variant, tcfg, setup)
             acc_t = mm.MOTAccumulator(auto_id=True) if variant.use_tracking else None
             acc_i = mm.MOTAccumulator(auto_id=True)
             for fr, rows in zip(frames, rows_all):

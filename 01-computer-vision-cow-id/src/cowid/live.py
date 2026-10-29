@@ -46,6 +46,11 @@ COWS2021_VIDEOS = Path(
 #: пережатия — кадры те же. Его привозит архив для другого компьютера.
 MMCOWS_FROM_14 = Path("data/real/mmcows_0725_from14.mp4")
 MMCOWS_FIRST_SHOWN = 3360
+#: Кадры суток 25.07, когда загон пуст — коровы на дойке. По разметке датасета
+#: (labels/combined/0725): во всех четырёх камерах ноль коров, 04:30–05:03 и
+#: 15:32–16:07. Кадр = 15 с; [первый, последний + 1). При показе пропускаются.
+MMCOWS_EMPTY = [(1081, 1213, "04:30–05:03"), (3729, 3869, "15:32–16:07")]
+EMPTY_NOTE = "коровы на дойке, загон пуст"
 
 #: Ролики Cows2021, где все коровы — из тех, на которых училась модель.
 KNOWN_CLIPS = [
@@ -87,10 +92,19 @@ class LiveSource:
     real_seconds_per_frame: Optional[float] = None
     #: Для камер: "top" — сверху (наш детектор), "side" — сбоку (COCO).
     view: str = ""
+    #: Отрезки без коров (номера кадров суток), которые файл перепрыгивает.
+    skip: list = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {"id": self.id, "title": self.title, "kind": self.kind, "note": self.note,
                 "view": self.view}
+
+    def empty_at(self, idx: int) -> Optional[tuple[int, str]]:
+        """Кадр попал в отрезок без коров → (куда прыгнуть, какие часы пропущены)."""
+        for first, end, label in self.skip:
+            if first <= idx < end:
+                return end, label
+        return None
 
 
 def _clips(names: list[str]) -> list[str]:
@@ -112,34 +126,33 @@ def available_sources() -> list[LiveSource]:
         video = None
     if video:
         out.append(LiveSource(
-            "demo_other_farm", "Демо: ферма MmCows — кто это и что это значит", "playlist",
-            note="США, 4 камеры под наклоном, кадр раз в 15 с (сутки за 24 минуты), показ с 14:00. "
-            "Детектор и узнавание дообучены на утренних кадрах этой фермы; 16 коров "
-            "зарегистрированы, к каждой подтягивается карточка из реестра фермы.",
-            config="configs/mmcows.yaml", speed=4.0, real_seconds_per_frame=15.0, **video))
+            "demo_other_farm", "Демо: ферма MmCows (США), 16 коров", "playlist",
+            note="Видео 25.07: 4 камеры, кадр раз в 15 с — сутки за 24 минуты. Показ с 14:00, "
+            "дойку 15:32–16:07 пропускает. Модели дообучены на утренних кадрах этой фермы.",
+            config="configs/mmcows.yaml", speed=4.0, real_seconds_per_frame=15.0,
+            skip=MMCOWS_EMPTY, **video))
     known = _clips(KNOWN_CLIPS)
     if known:
         out.append(LiveSource(
             "demo_known", "Демо: знакомые коровы (Cows2021)", "playlist", known,
-            "Проход после дойки, камера сверху. Модель училась на этих коровах "
-            "(по февральским фото); ролики — март, их модель не видела."))
+            "Проход после дойки, камера сверху. Модель училась на этих коровах по февральским "
+            "фото; мартовские ролики она не видела."))
     unseen = _clips(UNSEEN_CLIPS)
     if unseen:
         out.append(LiveSource(
             "demo_unseen", "Демо: коровы, которых модель не видела", "playlist", unseen,
-            "Эти коровы не участвовали в обучении модели. Они только зарегистрированы "
-            "по фото за месяц до записи — так будет с новой партией на ферме."))
+            "Не участвовали в обучении — только зарегистрированы по фото за месяц до записи, "
+            "как новая партия на ферме."))
     out.append(LiveSource(
         "browser", "Камера телефона или ноутбука", "browser", None,
-        "Снимает браузер: на ноутбуке — встроенная камера, на телефоне — задняя. "
-        "Телефон — в одной сети с компьютером (Wi-Fi или точка доступа телефона)."))
+        "Снимает браузер: на ноутбуке — встроенная камера, на телефоне — задняя "
+        "(телефон — в той же сети, что и компьютер)."))
     out.append(LiveSource(
-        "camera0", "Камера компьютера по номеру", "camera", 0,
+        "camera0", "Камера компьютера (USB)", "camera", 0,
         "Камера, подключённая к компьютеру с сервером: 0 — встроенная, 1 — USB."))
     out.append(LiveSource(
-        "url", "IP-камера или телефон по ссылке", "url", "",
-        "RTSP-камера коровника (rtsp://…) или приложение на телефоне, "
-        "например IP Webcam: http://адрес-телефона:8080/video."))
+        "url", "IP-камера по ссылке", "url", "",
+        "RTSP-камера коровника (rtsp://…) или телефон с IP Webcam: http://адрес-телефона:8080/video."))
     return out
 
 
@@ -150,9 +163,11 @@ def available_sources() -> list[LiveSource]:
 class _Reader(threading.Thread):
     """Читает источник в своём потоке и держит только самый свежий кадр.
 
-    Обработка медленнее видео — старые кадры не копятся, берётся последний.
-    Файлы проигрываются в реальном времени и по кругу; каждый новый файл —
-    новый «отрезок», на котором трекер начинает заново.
+    Камера: обработка медленнее видео — старые кадры не копятся, берётся
+    последний. Файл: кадры не выбрасываются — следующий отдаётся, когда
+    предыдущий взяли в обработку; не успевает обработка — показ замедляется,
+    а не скачет. Файлы идут по кругу; каждый новый файл и каждый пропуск
+    пустого загона — новый «отрезок», на котором трекер начинает заново.
     """
 
     def __init__(self, source: LiveSource):
@@ -161,10 +176,14 @@ class _Reader(threading.Thread):
         self.stop_flag = threading.Event()
         self.lock = threading.Lock()
         self.latest: Optional[tuple[int, int, float, np.ndarray]] = None
+        self.taken = threading.Event()
+        self.taken.set()
         self.segment = 0
         self.fps = 0.0
         self.error = ""
         self.clip_name = ""
+        #: Какие часы пропущены за этот проход по файлу (загон пуст).
+        self.skipped: list[str] = []
 
     def _open(self, target) -> cv2.VideoCapture:
         if isinstance(target, int):
@@ -188,6 +207,7 @@ class _Reader(threading.Thread):
         files = list(self.source.target)
         first = True
         while not self.stop_flag.is_set():
+            self.skipped = []
             for path in files:
                 if self.stop_flag.is_set():
                     return
@@ -210,15 +230,30 @@ class _Reader(threading.Thread):
                 start_idx = idx
                 started = time.perf_counter()
                 while not self.stop_flag.is_set():
+                    empty = self.source.empty_at(idx)
+                    if empty:
+                        idx, label = empty
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, idx - self.source.first_index)
+                        self.skipped.append(label)
+                        self.segment += 1          # коровы вернулись — дорожки заново
+                        start_idx, started = idx, time.perf_counter()
                     ok, frame = cap.read()
                     if not ok:
                         break
+                    # Воспроизведение в реальном времени (или с ускорением).
+                    due = started + (idx - start_idx) / play_fps
+                    pause = due - time.perf_counter()
+                    if pause > 0:
+                        time.sleep(pause)
+                    while not self.taken.wait(0.2):
+                        if self.stop_flag.is_set():
+                            break
+                    self.taken.clear()
+                    late = time.perf_counter() - due
+                    if late > 0:
+                        started += late            # обработка не успела — без рывка вдогонку
                     self._publish(idx, fps, frame)
                     idx += 1
-                    # Воспроизведение в реальном времени (или с ускорением).
-                    wait = started + (idx - start_idx) / play_fps - time.perf_counter()
-                    if wait > 0:
-                        time.sleep(wait)
                 cap.release()
 
     def _run_stream(self) -> None:
@@ -246,6 +281,8 @@ class _Reader(threading.Thread):
     def take(self) -> Optional[tuple[int, int, float, np.ndarray]]:
         with self.lock:
             item, self.latest = self.latest, None
+        if item is not None:
+            self.taken.set()
         return item
 
 
@@ -346,6 +383,11 @@ class _Models:
         gallery_path = Path("var") / f"gallery_{cfg.camera_id}.json"
         self.gallery = (BiometricGallery.load(gallery_path, cfg.gallery)
                         if gallery_path.exists() else BiometricGallery(cfg.gallery))
+        self.pose_gallery = None
+        if cfg.gallery.pose_gallery and Path(cfg.gallery.pose_gallery).exists():
+            from .identity.gallery import PoseGallery
+
+            self.pose_gallery = PoseGallery.load(cfg.gallery.pose_gallery, cfg.gallery)
         self.zones = None
         if cfg.zone_masks and Path(cfg.zone_masks).exists():
             from .activity.zones import MaskZones
@@ -359,16 +401,39 @@ class _Models:
 
             self.registry = registry(date.fromisoformat(cfg.farm.as_of))
         self.norms: dict[str, dict] = {}
+        self.extremes: dict = {}
         if cfg.farm.hourly_norms == "mmcows":
-            from .mmcows import load_hourly_norms
+            from .mmcows import load_hourly_norms, load_usual_extremes
 
             self.norms = load_hourly_norms()
+            self.extremes = load_usual_extremes()
 
 
 
 ZONE_RU = {"feeder": "у корма", "drinker": "у поилки"}
 #: Сколько корова должна быть на виду, чтобы сравнивать её с обычными часами.
 MIN_SEEN_S = 20 * 60
+#: Сколько последних положений коровы рисовать путём (кадр раз в 15 с — 10 минут).
+TRAIL_POINTS = 40
+#: Перекличка: корову не видно столько минут показа — «давно не видно».
+MISSING_MIN = 30
+#: Подход к корму на камере: не меньше минуты у стола за 5 минут (как по радиометке).
+FEED_VISIT_WINDOW_S = 300
+FEED_VISIT_MIN_S = 60
+#: «Не ела» заявляем, только если корову видели хотя бы столько времени перерыва:
+#: иначе она могла есть, пока камера её не узнавала.
+MIN_SEEN_SHARE = 0.6
+
+
+def activity_kind(state: str, zone: Optional[str]) -> str:
+    """Одно слово для ленты дня: лежит важнее зоны, зона важнее «стоит»."""
+    if state == "лежит":
+        return "лежит"
+    if zone == "feeder":
+        return "у корма"
+    if zone == "drinker":
+        return "у поилки"
+    return "стоит"
 
 
 @dataclass
@@ -384,22 +449,62 @@ class _CowStats:
     zone: Optional[str] = None
     bout_start: Optional[float] = None
     longest_bout: float = 0.0
+    #: Лента дня: [начало, конец, что делала] в секундах суток фермы.
+    timeline: list = field(default_factory=list)
+    #: Последние положения в кадре: (секунды, x, y, камера) — путь по загону.
+    trail: deque = field(default_factory=lambda: deque(maxlen=TRAIL_POINTS))
+    camera: Optional[int] = None
+    #: Сколько секунд показа прошло к моменту, когда её видели в последний раз
+    #: (без пропущенной дойки) — для переклички.
+    watched_at: float = 0.0
+    first_t: Optional[float] = None
+    #: Когда последний раз подходила к корму (не меньше минуты у стола за 5 минут)
+    #: и сколько секунд её видели с тех пор — «не ела N часов».
+    feeder_last: Optional[float] = None
+    seen_since_feeder: float = 0.0
+    feeder_times: deque = field(default_factory=lambda: deque(maxlen=40))
 
-    def update(self, t: float, max_gap: float, state: str, zone: Optional[str]) -> None:
+    def update(self, t: float, max_gap: float, state: str, zone: Optional[str],
+               step: float = 0.0, where: Optional[tuple[float, float, Optional[int]]] = None,
+               watched: float = 0.0) -> None:
         gap = t - self.last_t
         dt = gap if 0 < gap <= max_gap else 0.0
         hour = int(t // 3600) % 24
+        if self.first_t is None:
+            self.first_t = t
         if dt:
             self.seen[hour] += dt
             self.lying[hour] += dt if state == "лежит" else 0.0
             self.feeder[hour] += dt if zone == "feeder" else 0.0
             self.drinker[hour] += dt if zone == "drinker" else 0.0
+            self.seen_since_feeder += dt
+        if zone == "feeder" and state != "лежит":
+            self.feeder_times.append(t)
+            # Как «подход к корму» по радиометке: не меньше минуты у стола за 5 минут.
+            if sum(1 for x in self.feeder_times if t - x <= FEED_VISIT_WINDOW_S) * max(step, 1.0) \
+                    >= FEED_VISIT_MIN_S:
+                self.feeder_last, self.seen_since_feeder = t, 0.0
         if state == "лежит":
             if self.bout_start is None or not dt:
                 self.bout_start = t
             self.longest_bout = max(self.longest_bout, t - self.bout_start)
         else:
             self.bout_start = None
+        kind = activity_kind(state, zone)
+        line = self.timeline
+        if dt and line:
+            line[-1][1] = t                    # пропуск в пару кадров — то же занятие
+        if dt and line and line[-1][2] == kind:
+            line[-1][1] = t + step
+        else:
+            line.append([t, t + step, kind])
+        if where is not None:
+            x, y, cam = where
+            if not dt or cam != self.camera:
+                self.trail.clear()             # путь — только непрерывный и в одной камере
+            self.trail.append((t, x, y, cam))
+            self.camera = cam
+        self.watched_at = watched
         self.last_t, self.state, self.zone = t, state, zone
 
     def share(self, kind: str) -> Optional[float]:
@@ -427,20 +532,77 @@ def _pct(v: Optional[float]) -> Optional[int]:
     return None if v is None else int(round(100 * v))
 
 
+def hours_text(seconds: float) -> str:
+    """4 ч 10 мин, 55 мин."""
+    m = int(round(seconds / 60))
+    return f"{m // 60} ч {m % 60:02d} мин" if m >= 60 else f"{m} мин"
+
+
+def personal_limits(extremes: dict, cow: str, now: float) -> Optional[dict]:
+    """Самый долгий перерыв в еде и лежание подряд, что бывали у этой коровы за
+    12 других суток в это же окно суток (датчики; день показа не входит).
+    У коровы без датчиков — граница, которую не переходят 9 из 10 коров-суток стада."""
+    if not extremes:
+        return None
+    from .mmcows import EXTREME_WINDOWS
+
+    hour = (now % 86400) / 3600
+    key = next(f"{a}-{b}" for a, b in EXTREME_WINDOWS if a <= hour < b)
+    own = (extremes.get(cow) or {}).get(key)
+    if own and own["feed_gap_h"] and own["lying_bout_h"]:
+        return {"feed_h": max(own["feed_gap_h"]), "lying_h": max(own["lying_bout_h"]), "own": True}
+    feed = [x for c in extremes.values() for x in (c.get(key) or {}).get("feed_gap_h", [])]
+    lying = [x for c in extremes.values() for x in (c.get(key) or {}).get("lying_bout_h", [])]
+    if not feed or not lying:
+        return None
+    return {"feed_h": float(np.percentile(feed, 90)), "lying_h": float(np.percentile(lying, 90)),
+            "own": False}
+
+
+def explicit_alerts(stats: _CowStats, now: float, limits: Optional[dict]) -> list[dict]:
+    """Явные предупреждения: «не ела слишком долго», «лежит слишком долго подряд».
+
+    Слишком долго — на четверть дольше, чем у этой коровы бывало за 12 других
+    суток (у коров без датчиков — чем у 9 из 10 коров-суток стада). «Не ела»
+    говорим, только если корову видели большую часть перерыва.
+    """
+    from .mmcows import LIMIT_MARGIN
+
+    if not limits:
+        return []
+    out = []
+    whose =("у неё за 12 других суток самое долгое " if limits["own"]
+             else "у 9 из 10 коров стада не дольше ")
+    if stats.first_t is not None:
+        since = stats.feeder_last if stats.feeder_last is not None else stats.first_t
+        gap = now - since
+        if gap > limits["feed_h"] * LIMIT_MARGIN * 3600 and stats.seen_since_feeder >= MIN_SEEN_SHARE * gap:
+            what = ("не подходила к корму " if stats.feeder_last is not None
+                    else "не видели у корма с начала показа: ")
+            out.append({"level": "strong", "kind": "alert",
+                        "text": what + hours_text(gap) + " — " + whose + hours_text(limits["feed_h"] * 3600)})
+    bout = (now - stats.bout_start) if stats.bout_start is not None else 0.0
+    if bout > limits["lying_h"] * LIMIT_MARGIN * 3600:
+        out.append({"level": "strong", "kind": "alert",
+                    "text": "лежит " + hours_text(bout) + " подряд — " + whose + hours_text(limits["lying_h"] * 3600)})
+    return out
+
+
 def cow_signs(stats: _CowStats, norm: dict, record: Optional[dict], now: float,
-              own: bool = True) -> list[dict]:
+              own: bool = True, limits: Optional[dict] = None) -> list[dict]:
     """Что значит поведение коровы — словами зоотехника.
 
     Лежит или стоит — само по себе ничего не говорит. Говорит отличие от её
     обычных часов и то, что о ней известно (недавняя хромота из реестра).
     Хромоту камера здесь не видит напрямую: это косвенный признак по поведению.
     `own` — норма своя (обычные часы коровы); иначе — сравнение со стадом.
+    `limits` — её пределы по датчикам для явных предупреждений (`personal_limits`).
     """
     than = "обычного" if own else "стада"
-    signs = []
+    signs = explicit_alerts(stats, now, limits)
     seen = sum(stats.seen.values())
     bout = (now - stats.bout_start) if stats.bout_start is not None else 0.0
-    if bout >= 120 * 60:
+    if bout >= 120 * 60 and not limits:
         signs.append({"level": "notable", "text": f"лежит без перерыва {bout / 60:.0f} мин"})
     if seen < MIN_SEEN_S:
         return signs
@@ -476,7 +638,7 @@ def cow_signs(stats: _CowStats, norm: dict, record: Optional[dict], now: float,
             why.append(f"лежит без перерыва {bout / 60:.0f} мин")
         if recent_leg:
             why.append(f"в реестре {leg['what']} {leg['day'][8:10]}.{leg['day'][5:7]}")
-        signs.insert(0, {"level": "strong",
+        signs.insert(0, {"level": "strong", "kind": "alert",
                          "text": "возможна хромота — осмотреть ноги (" + ", ".join(why) + ")"})
     return signs
 
@@ -501,13 +663,13 @@ def _registry_brief(record: Optional[dict]) -> Optional[dict]:
 
 
 def cow_row(cow: str, stats: _CowStats, hourly: Optional[dict], herd: dict,
-            record: Optional[dict], now: float) -> dict:
+            record: Optional[dict], now: float, limits: Optional[dict] = None) -> dict:
     if hourly:
         norm = {k: stats.expected(hourly, k) for k in ("lying", "feeder", "drinker")}
         source = "её обычные часы (датчики, 13 суток)"
     else:
         norm, source = herd, "стадо в эти же часы"
-    signs = cow_signs(stats, norm, record, now, own=bool(hourly))
+    signs = cow_signs(stats, norm, record, now, own=bool(hourly), limits=limits)
     bout = (now - stats.bout_start) if stats.bout_start is not None else 0.0
     return {
         "cow": cow, "state": stats.state, "zone": ZONE_RU.get(stats.zone, stats.zone),
@@ -518,6 +680,10 @@ def cow_row(cow: str, stats: _CowStats, hourly: Optional[dict], herd: dict,
         "bout_min": round(bout / 60), "longest_bout_min": round(stats.longest_bout / 60),
         "norm_source": source, "norm_own": bool(hourly), "signs": signs,
         "registry": _registry_brief(record),
+        "camera": stats.camera, "last_t": round(stats.last_t),
+        # Лента дня и её обычные часы по датчикам (доли часа: лежит, у корма, у поилки).
+        "timeline": [[round(a), round(b), k] for a, b, k in stats.timeline],
+        "usual": ({k: hourly.get(k) for k in ("lying", "feeder", "drinker")} if hourly else None),
     }
 
 
@@ -539,6 +705,9 @@ class FrameProcessor:
         self.session: dict[str, float] = {}
         self.cows: dict[str, _CowStats] = {}
         self.now = 0.0
+        #: Сколько секунд фермы показано за сеанс — без пропущенной дойки.
+        self.watched = 0.0
+        self._last_t: Optional[float] = None
         self.reset()
 
     def reset(self) -> None:
@@ -552,28 +721,52 @@ class FrameProcessor:
         return idx * self.real_spf if self.real_spf else idx / max(fps, 1e-6)
 
     def process(self, frame: np.ndarray, idx: int, fps: float) -> list[dict]:
+        from .identity.embedder import embed_detections
+
         models = self.models
         t_video = self.video_time(idx, fps)
+        if self._last_t is not None and t_video < self._last_t:
+            # Ролик пошёл на новый круг — это уже другие сутки: журнал сеанса заново.
+            self.session, self.cows, self.watched = {}, {}, 0.0
+        elif self._last_t is not None:
+            step = self.real_spf or self.cfg.video.frame_stride / max(fps, 1e-6)
+            gap = t_video - self._last_t
+            self.watched += gap if gap <= max(4 * step, 5.0) else step
+        self._last_t = t_video
         detections = models.detector.detect(frame, idx)
         # Галерея пуста — узнавать некого; отпечатки не считаем, это самое дорогое.
-        embeddings = ([models.embedder.embed(frame, d.bbox, d.corners) for d in detections]
+        embeddings = (embed_detections(models.embedder, frame, detections)
                       if models.gallery.size() else None)
         active = self.tracker.update(detections, idx, embeddings)
         for done in self.tracker.drain_finished():
             self.tracks.pop(done.track_id, None)
 
         w = frame.shape[1]
-        rows = []
+        # Новые отпечатки всех дорожек кадра — в галерею одним умножением матриц.
+        pending = []
         for t in active:
             info = self.tracks.get(t.track_id)
             if info is None:
                 info = _TrackInfo(first_t=t_video, last_t=t_video,
                                   votes=deque(maxlen=self.cfg.gallery.vote_window or None))
                 self.tracks[t.track_id] = info
-            for emb in t.embeddings[info.seen_embeddings:]:
+            label = t.observations[-1].label
+            pending += [(info, emb, label) for emb in t.embeddings[info.seen_embeddings:]]
+            info.seen_embeddings = len(t.embeddings)
+        with_pose = [p for p in pending if models.pose_gallery is not None and p[2] in POSES]
+        if with_pose:
+            names = models.pose_gallery.match_many(np.stack([e for _, e, _ in with_pose]),
+                                                   [label == "lying" for _, _, label in with_pose])
+            for (info, _, _), name in zip(with_pose, names):
+                info.votes.append(name)
+        for info, emb, label in pending:
+            if not (models.pose_gallery is not None and label in POSES):
                 match = models.gallery.match(emb)
                 info.votes.append(match.cow_id if match.is_known else None)
-            info.seen_embeddings = len(t.embeddings)
+
+        rows, infos, dts = [], [], []
+        for t in active:
+            info = self.tracks[t.track_id]
             obs = t.observations[-1]
             if obs.frame_idx != idx:
                 continue                       # трек сейчас держится на предсказании
@@ -605,8 +798,8 @@ class FrameProcessor:
             if zone:
                 info.zone_s[zone] += dt
             cow, votes, total = info.identity(self.cfg.gallery.vote_ratio)
-            if cow:
-                self.session[cow] = self.session.get(cow, 0.0) + dt
+            infos.append(info)
+            dts.append(dt)
             rows.append({
                 "track": t.track_id, "cow": cow, "votes": votes, "total": total, "zone_key": zone,
                 "seconds": round(t_video - info.first_t, 1),
@@ -617,10 +810,33 @@ class FrameProcessor:
                 "corners": obs.corners, "bbox": obs.bbox.to_xyxy(),
                 "registered": models.gallery.size() > 0,
             })
-        self._update_cows(rows, t_video, fps)
+        if self.cfg.gallery.one_box_per_cow:
+            self._one_box_per_cow(rows, infos, frame.shape)
+        for r, dt in zip(rows, dts):
+            if r["cow"]:
+                self.session[r["cow"]] = self.session.get(r["cow"], 0.0) + dt
+        self._update_cows(rows, t_video, fps, frame.shape)
         return rows
 
-    def _update_cows(self, rows: list[dict], t_video: float, fps: float) -> None:
+    def _one_box_per_cow(self, rows: list[dict], infos: list[_TrackInfo],
+                         shape: tuple[int, ...]) -> None:
+        """В одной камере корова одна: номера раздаются всем дорожкам камеры сразу."""
+        from .identity.voting import assign_unique
+
+        by_cam: dict = {}
+        for i, r in enumerate(rows):
+            x1, y1, x2, y2 = r["bbox"]
+            by_cam.setdefault(self.camera_of((x1 + x2) / 2, (y1 + y2) / 2, shape), []).append(i)
+        for idxs in by_cam.values():
+            tallies = [Counter(v for v in infos[i].votes if v is not None) for i in idxs]
+            names = assign_unique(tallies, [len(infos[i].votes) for i in idxs],
+                                  MIN_VOTES, self.cfg.gallery.vote_ratio)
+            for i, tally, cow in zip(idxs, tallies, names):
+                rows[i]["cow"] = cow
+                rows[i]["votes"] = tally.get(cow, 0) if cow else (max(tally.values()) if tally else 0)
+
+    def _update_cows(self, rows: list[dict], t_video: float, fps: float,
+                     shape: tuple[int, ...]) -> None:
         """Одна корова может быть видна двум камерам — берётся дорожка с большим числом голосов."""
         step = self.real_spf or self.cfg.video.frame_stride / max(fps, 1e-6)
         best: dict[str, dict] = {}
@@ -628,9 +844,81 @@ class FrameProcessor:
             if r["cow"] and (r["cow"] not in best or r["votes"] > best[r["cow"]]["votes"]):
                 best[r["cow"]] = r
         for cow, r in best.items():
+            x1, y1, x2, y2 = r["bbox"]
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
             self.cows.setdefault(cow, _CowStats()).update(
-                t_video, max(4 * step, 5.0), r["state"], r["zone_key"])
+                t_video, max(4 * step, 5.0), r["state"], r["zone_key"], step=step,
+                where=(cx, cy, self.camera_of(cx, cy, shape)), watched=self.watched)
         self.now = t_video
+
+    def camera_of(self, x: float, y: float, shape: tuple[int, ...]) -> Optional[int]:
+        """Номер камеры в кадре из нескольких камер (MmCows: 2×2 → 1–4)."""
+        n = self.cfg.detector.tiles
+        if n <= 1:
+            return None
+        h, w = shape[:2]
+        return min(n - 1, int(y * n // h)) * n + min(n - 1, int(x * n // w)) + 1
+
+    def clock(self, t: float) -> Optional[str]:
+        """Время суток фермы — только у ролика с прореживанием (MmCows)."""
+        return time.strftime("%H:%M", time.gmtime(t)) if self.real_spf else None
+
+    def rollcall(self) -> Optional[dict]:
+        """Перекличка: кто из зарегистрированных коров на виду, кого давно не видно.
+
+        Только для фермы с реестром: камеры там смотрят на весь загон, и каждая
+        корова должна попадаться на глаза. Отсутствие считается по показанному
+        времени — пропущенная дойка не в счёт.
+        """
+        if not self.models.registry:
+            return None
+        cows = []
+        for cow in sorted(self.models.gallery.known_ids()):
+            st = self.cows.get(cow)
+            away = None if st is None else self.watched - st.watched_at
+            missing = (away if away is not None else self.watched) >= MISSING_MIN * 60
+            cows.append({"cow": cow, "missing": missing,
+                         "away_min": None if away is None else round(away / 60),
+                         "last": self.clock(st.last_t) if st else None,
+                         "camera": st.camera if st else None,
+                         "now": activity_kind(st.state, st.zone) if st and away == 0 else None})
+        cows.sort(key=lambda c: (not c["missing"], -(c["away_min"] if c["away_min"] is not None
+                                                     else 10 ** 6), c["cow"]))
+        return {"total": len(cows), "missing": sum(c["missing"] for c in cows),
+                "in_frame": sum(c["away_min"] == 0 for c in cows),
+                "watched_min": round(self.watched / 60), "limit_min": MISSING_MIN, "cows": cows}
+
+    def focus(self, cow: Optional[str], rows: list[dict], shape: tuple[int, ...] = (0, 0)) -> Optional[dict]:
+        """Что рисовать для выбранной коровы: её рамки, путь и подпись, если её нет в кадре.
+
+        Камеры MmCows смотрят на загон с разных углов, и одна корова бывает видна
+        в нескольких. Но в одной камере она одна: если номер достался двум
+        дорожкам, подсвечивается та, за которую больше голосов.
+        """
+        if not cow:
+            return None
+        st = self.cows.get(cow)
+        best: dict = {}
+        for r in rows:
+            if r["cow"] == cow:
+                x1, y1, x2, y2 = r["bbox"]
+                cam = self.camera_of((x1 + x2) / 2, (y1 + y2) / 2, shape) if shape[0] else None
+                if cam not in best or r["votes"] > best[cam]["votes"]:
+                    best[cam] = r
+        in_frame = bool(best)
+        trail = [(x, y) for _, x, y, _ in st.trail] if st and in_frame else []
+        if in_frame:
+            note = ""
+        elif st is None:
+            note = f"{cow} пока не узнана в кадре"
+        else:
+            where = f", камера {st.camera}" if st.camera else ""
+            when = self.clock(st.last_t)
+            note = f"{cow} сейчас не в кадре — последний раз {when}{where}" if when else \
+                f"{cow} сейчас не в кадре"
+        return {"cow": cow, "trail": trail, "note": note, "in_frame": in_frame,
+                "tracks": [r["track"] for r in best.values()],
+                "cameras": sorted(c for c in best if c), "camera": st.camera if st else None}
 
     def summary(self, frame: np.ndarray, rows: list[dict]) -> dict:
         known = sum(1 for r in rows if r["cow"])
@@ -650,6 +938,8 @@ class FrameProcessor:
             out["lying"] = sum(1 for r in rows if r["state"] == "лежит")
             out["standing"] = len(rows) - out["lying"]
         out["cows"] = self.cow_rows()
+        out["rollcall"] = self.rollcall()
+        out["now_t"] = round(self.now)
         out["farm"] = {"registry": bool(self.models.registry), "norms": bool(self.models.norms),
                        "as_of": self.cfg.farm.as_of}
         return out
@@ -660,8 +950,10 @@ class FrameProcessor:
             vals = [st.share(kind) for st in self.cows.values()
                     if sum(st.seen.values()) >= MIN_SEEN_S and st.share(kind) is not None]
             herd[kind] = float(np.median(vals)) if len(vals) >= 3 else None
+        extremes = getattr(self.models, "extremes", {})
         rows = [cow_row(cow, st, self.models.norms.get(cow), herd,
-                        self.models.registry.get(cow), self.now)
+                        self.models.registry.get(cow), self.now,
+                        personal_limits(extremes, cow, self.now) if self.real_spf else None)
                 for cow, st in self.cows.items()]
         rank = {"strong": 0, "notable": 1, "info": 2}
         rows.sort(key=lambda r: (min((rank[x["level"]] for x in r["signs"]), default=3),
@@ -725,6 +1017,8 @@ class LiveEngine:
         self._jpeg: Optional[bytes] = None
         self._state: dict = {"running": False}
         self._frame_event = threading.Condition()
+        #: «Найти корову»: её номер — на кадре подсвечена она и её путь.
+        self.focus: Optional[str] = None
 
     def models_for(self, source: LiveSource) -> tuple[PipelineConfig, _Models]:
         cfg = source_config(source)
@@ -753,6 +1047,7 @@ class LiveEngine:
             source = replace(source, view="side" if view == "side" else "top")
 
         self.stop()
+        self.focus = None
         cfg, models = self.models_for(source)
         self._stop.clear()
         self._reader = _PushReader(source) if source.kind == "browser" else _Reader(source)
@@ -797,7 +1092,7 @@ class LiveEngine:
     # -- цикл --------------------------------------------------------------
 
     def _loop(self, source: LiveSource, cfg: PipelineConfig, models: _Models) -> None:
-        from .render import draw_tracks
+        from .render import draw_tracks_small
 
         reader = self._reader
         proc = FrameProcessor(cfg, models, source.real_seconds_per_frame)
@@ -819,11 +1114,11 @@ class LiveEngine:
             started = time.perf_counter()
             rows = proc.process(frame, idx, fps)
             h, w = frame.shape[:2]
-            scale = min(1.0, STREAM_WIDTH / w)
-            annotated = draw_tracks(frame, rows, scale)
-            if scale < 1:
-                annotated = cv2.resize(annotated, (STREAM_WIDTH, int(h * scale)),
-                                       interpolation=cv2.INTER_AREA)
+            focus = proc.focus(self.focus, rows, frame.shape)
+            summary = proc.summary(frame, rows)
+            alerted = {r["cow"] for r in summary["cows"]
+                       if any(s.get("kind") == "alert" for s in r["signs"])}
+            annotated = draw_tracks_small(frame, rows, STREAM_WIDTH, focus, alerted)
             proc_times.append(time.perf_counter() - started)
             processed += 1
             t_video = proc.video_time(idx, fps)
@@ -839,7 +1134,9 @@ class LiveEngine:
                 "fps_proc": round(len(proc_times) / max(sum(proc_times), 1e-6), 1),
                 "processed": processed,
                 "error": reader.error if reader else "",
-                **proc.summary(frame, rows),
+                "skipped": [f"{label} — {EMPTY_NOTE}" for label in getattr(reader, "skipped", [])],
+                "focus": {k: v for k, v in focus.items() if k != "trail"} if focus else None,
+                **summary,
             }
             ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
             with self._lock:

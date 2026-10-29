@@ -34,16 +34,20 @@ def features(cow: str, day: date, feeder_h: float, observed_h: float = 16.0,
 # Сценарии: что система должна заметить
 # --------------------------------------------------------------------------
 
+# С 29.10 порог накопления h = 5 (был 2,5): на настоящих болезнях INRAE поимка та же,
+# а ложных «проверить» втрое меньше. Цена — на заданных сценариях «проверить» ставится
+# реже и на сутки позже; ниже — новая рабочая точка, а не прежняя.
+
 def test_severe_mastitis_is_caught_on_first_day():
     r = run_scenario(SCENARIO["Тяжёлый мастит"], CFG, daily_cv=0.12, herd=100)
-    assert r.correct_rate >= 0.95
+    assert r.correct_rate >= 0.85
     assert r.median_detection_day == 1
 
 
-def test_lameness_is_caught_within_two_days():
+def test_lameness_is_caught_within_three_days():
     r = run_scenario(SCENARIO["Хромота"], CFG, daily_cv=0.12, herd=100)
-    assert r.correct_rate >= 0.85
-    assert r.median_detection_day <= 2
+    assert r.correct_rate >= 0.7
+    assert r.median_detection_day <= 3
 
 
 # --------------------------------------------------------------------------
@@ -187,3 +191,27 @@ def test_whole_herd_shift_is_one_herd_event_not_many_cow_events():
         for c in cows
     ])
     assert {e.cow_id for e in one} == {"K0"}
+
+
+def test_lasting_change_becomes_her_new_norm_instead_of_endless_alert():
+    """Корова навсегда стала есть меньше (другой рацион): тревога — да, но не на месяцы.
+
+    Без «новой нормы» сутки тревоги не идут в норму, норма замерзает, и на
+    данных INRAE корова висела в «проверить» до 388 суток подряд.
+    """
+    def statuses(max_days):
+        b = PersonalBaseline(BaselineConfig(max_episode_days=max_days))
+        rng = np.random.default_rng(3)
+        out = []
+        for i in range(60):
+            day = date(2024, 1, 1) + timedelta(days=i)
+            feed = (5.0 if i < 20 else 3.0) * (1 + 0.05 * rng.standard_normal())
+            herd = [features(f"Q{k}", day, 5.0 * (1 + 0.05 * rng.standard_normal())) for k in range(6)]
+            b.evaluate_day(herd + [features("A", day, feed)])
+            out.append(next(a.status for a in b.assessments[-7:] if a.cow_id == "A"))
+        return out
+
+    frozen, adaptive = statuses(0), statuses(5)
+    assert "alert" in frozen[20:26] and "alert" in adaptive[20:26]      # перемену заметили сразу
+    assert frozen[-10:].count("alert") >= 8                              # без новой нормы — тревога до конца
+    assert adaptive[-10:].count("alert") == 0                            # с новой нормой — снова «в норме»

@@ -121,28 +121,19 @@ function route() {
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   stopBrowserCamera();
   const hash = location.hash.replace(/^#/, "") || "/";
-  const parts = hash.split("/").filter(Boolean);
-  const page = parts[0] || "today";
-  document.querySelectorAll("nav a").forEach(a =>
-    a.classList.toggle("on", a.dataset.page === (page === "cow" ? "herd" : page)));
-  const view = { today: pageToday, herd: pageHerd, cow: pageCow, live: pageLive, quality: pageQuality }[page]
-    || pageToday;
+  const parts = hash.split("/").filter(Boolean).map(decodeURIComponent);
+  // Старые адреса (до трёх вкладок): #/today/сутки, #/herd/сутки, #/cow/номер/сутки.
+  if (parts[0] === "today" || parts[0] === "herd") { location.replace("#/cows/" + (parts[1] || "")); return; }
+  if (parts[0] === "cow") { location.replace("#/cows/" + (parts[2] || "") + "/" + enc(parts[1] || "")); return; }
+  const page = parts[0] || "live";
+  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.page === page));
+  const view = { live: pageLive, cows: pageCows, quality: pageQuality }[page] || pageLive;
   $app.innerHTML = '<div class="loading">Загрузка…</div>';
   view(parts.slice(1)).then(bindDaySwitch).catch(err => {
     $app.innerHTML = '<div class="panel"><div class="body">Ошибка: ' + esc(err.message) + "</div></div>";
   });
 }
 window.addEventListener("hashchange", route);
-
-async function barInfo() {
-  try {
-    const s = await api("/api/summary");
-    const days = s.days || [];
-    document.getElementById("bar-info").innerHTML =
-      "коров <b>" + s.animals + "</b> · суток <b>" + days.length + "</b>" +
-      (days.length ? " · последние данные <b>" + ddmm(days[days.length - 1]) + "</b>" : "");
-  } catch (e) { /* шапка не обязательна */ }
-}
 
 // Переключатель суток: ◀ пред. · список · след. ▶
 function daySwitch(days, day, prefix) {
@@ -163,11 +154,13 @@ function bindDaySwitch() {
   });
 }
 
-function countsStrip(counts, total, fb) {
+function countsStrip(counts, total, fb, explicit) {
   const c = counts || {};
   const cell = (k, v, cls, hint) => '<div' + (hint ? ' title="' + esc(hint) + '"' : "") + '><div class="k">' + k +
     '</div><div class="v ' + (cls || "") + '">' + v + "</div></div>";
   let out = '<div class="strip">' +
+    (explicit != null ? cell("Долго не ела / лежит", explicit, explicit ? "alert" : "zero",
+      "на четверть дольше её прежнего рекорда") : "") +
     cell("Проверить", c.alert || 0, (c.alert ? "alert" : "zero"), "признаки держатся или их много — осмотреть сегодня") +
     cell("На заметку", c.watch || 0, (c.watch ? "warn" : "zero"), "одно сильное или несколько умеренных отклонений") +
     cell("Признаки охоты", c.estrus || 0, (c.estrus ? "info" : "zero"), "двигается больше, лежит меньше") +
@@ -207,95 +200,98 @@ function eventText(e) {
     " (" + pct(d.delta_pct) + ")" + (run ? ", " + run[0] : "");
 }
 
-function eventItem(e, i) {
-  const herd = e.cow_id === "стадо";
-  return '<div class="ev click" data-i="' + i + '">' +
-    '<div class="ev-top"><span class="cow">' + (herd ? "Всё стадо" : esc(e.cow_id)) + "</span>" +
-    badge(herd ? "herd" : EVENT_STATUS[e.severity], herd ? "всё стадо" : null) +
-    '<span class="tag right">' + esc(ANSWER[e.status] || "") + "</span></div>" +
-    '<div class="ev-text">' + esc(eventText(e)) + "</div></div>";
+// ---------------------------------------------------------------- явные предупреждения (датчики)
+
+function hm(hours) {
+  const m = Math.round(hours * 60);
+  return m >= 60 ? Math.floor(m / 60) + " ч " + String(m % 60).padStart(2, "0") + " мин" : m + " мин";
 }
+function sensorAlertText(a) {
+  const bound = parseInt(a.window.split("-")[1], 10) * 3600;
+  const end = a.end >= bound - 60 ? (bound === 86400 ? "24:00" : clockOf(bound)) + " и дальше" : clockOf(a.end);
+  return (a.kind === "feed_gap" ? "не подходила к корму " : "лежала ") + hm(a.hours) + " подряд (" +
+    clockOf(a.start) + "–" + end + ")";
+}
+function sensorAlertWhy(a) {
+  return "её прежний рекорд " + hm(a.record_h) + " за " + a.history_days + " прошлых суток";
+}
+const SENSOR_NOTE = "По датчикам фермы (нога, радиометка), не по камере. Предупреждение — когда на четверть " +
+  "дольше её прежнего рекорда в эти же часы суток; рекорд — по прошлым суткам, нужно от 5.";
 
-// ---------------------------------------------------------------- Сегодня
-
-async function pageToday(args) {
-  const summary = await api("/api/summary");
-  const days = summary.days || [];
-  if (!days.length) {
-    $app.innerHTML = '<div class="panel"><div class="body">' +
-      "<h1>Данных пока нет</h1>" +
-      '<p class="lead">События появятся после обработки записей: норма коровы строится по нескольким ' +
-      "спокойным суткам, поэтому первые дни система только учится.</p>" +
-      "<p>Обработать запись камеры за сутки: <code>cowid process запись.mp4 --day 2026-09-16</code></p>" +
-      "<p>Загрузить реальные суточные данные MmCows для показа: <code>cowid import-mmcows</code></p>" +
-      '<p>Посмотреть, что видит камера прямо сейчас: <a href="#/live">Камера</a>.</p>' +
-      "</div></div>";
-    return;
+// Лента суток по датчикам: выбранные сутки и прошлые, красная рамка — предупреждение.
+function sensorStripSvg(data, width) {
+  const W = width || 1300, L = 64, R = 8, T = 18, lane = 16, big = 24, gap = 6;
+  const days = data.days;
+  const H = T + days.reduce((s, d) => s + (d.day === data.day ? big : lane) + gap, 0);
+  const x = t => L + (W - L - R) * t / 86400;
+  let out = '<svg class="tl big" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="лента суток по датчикам">';
+  for (let hh = 0; hh <= 24; hh += W < 1200 ? 4 : 2) {
+    out += '<line class="tick" x1="' + x(hh * 3600) + '" y1="' + (T - 4) + '" x2="' + x(hh * 3600) + '" y2="' + H + '"/>' +
+      '<text x="' + x(hh * 3600) + '" y="12" text-anchor="' + (hh === 0 ? "start" : hh === 24 ? "end" : "middle") + '">' +
+      String(hh).padStart(2, "0") + ":00</text>";
   }
-  const day = args[0] && days.includes(args[0]) ? args[0] : days[days.length - 1];
-  const [events, herd] = await Promise.all([api("/api/events?limit=5000"), api("/api/herd?day=" + day)]);
-  rememberSigns(herd.sign_names);
-  const list = events.filter(e => e.day === day).sort(byUrgency);
-  const cows = list.filter(e => e.cow_id !== "стадо").length;
-
-  let empty = "";
-  if (!list.length) {
-    empty = (herd.counts.learning === herd.cows.length)
-      ? "Первые сутки система запоминает обычный день каждой коровы. События начнутся, когда у коровы наберётся 5 спокойных суток."
-      : "Осматривать некого: у всех коров признаки в пределах их собственной нормы.";
-  }
-
-  $app.innerHTML =
-    '<div class="pagehead"><h1>Сегодня — ' + esc(fmtDay(day)) + "</h1>" + daySwitch(days, day, "#/today/") + "</div>" +
-    countsStrip(herd.counts, herd.cows.length, summary.events_by_status) +
-    '<div class="cols">' +
-    '<div class="panel"><h2>Кого осмотреть · коров ' + cows + "</h2>" +
-    (list.length ? '<div id="events">' + list.map(eventItem).join("") + "</div>"
-      : '<div class="body calm">' + esc(empty) + "</div>") + "</div>" +
-    '<div id="detail">' + (list.length ? "" :
-      '<div class="panel"><div class="body note">Ниже — что изменилось у коров за эти сутки, даже если это не повод для осмотра.</div></div>') +
-    "</div></div>" +
-    boardPanel(herd);
-
-  const items = [...document.querySelectorAll("#events .ev")];
-  items.forEach(it => it.onclick = () => {
-    items.forEach(x => x.classList.remove("on"));
-    it.classList.add("on");
-    showEvent(list[+it.dataset.i], it, herd);
+  let y = T;
+  days.forEach(d => {
+    const h = d.day === data.day ? big : lane;
+    out += '<text class="lane' + (d.day === data.day ? " on" : "") + '" x="0" y="' + (y + h / 2 + 5) + '">' + ddmm(d.day) + "</text>" +
+      '<rect class="tl-bg" x="' + L + '" y="' + y + '" width="' + (W - L - R) + '" height="' + h + '"/>' + runRects(d.runs, x, y, h);
+    data.alerts.filter(a => a.day === d.day).forEach(a => {
+      out += '<rect class="tl-alert" x="' + x(a.start).toFixed(1) + '" y="' + (y - 2) + '" width="' +
+        Math.max(2, x(a.end) - x(a.start)).toFixed(1) + '" height="' + (h + 4) + '"><title>' +
+        esc(sensorAlertText(a) + " — " + sensorAlertWhy(a)) + "</title></rect>";
+    });
+    y += h + gap;
   });
-  if (items.length) items[0].click();
+  return out + "</svg>";
 }
 
-// Доска признаков: что изменилось у кого — и что камера пока не считает.
-function boardPanel(herd) {
+// `bare` — без рамки панели, для вставки внутрь другой панели (разбор события).
+async function sensorStripPanel(cow, day, title, bare) {
+  let data;
+  try { data = await api("/api/sensor-strips/" + enc(cow) + "?day=" + day + "&back=6"); } catch (e) { return ""; }
+  const list = data.alerts.length ? '<ul class="alert-list">' + data.alerts.map(a =>
+    "<li><b>" + esc(ddmm(a.day)) + "</b> " + esc(sensorAlertText(a)) + " — " + esc(sensorAlertWhy(a)) + "</li>").join("") +
+    "</ul>" : '<p class="calm-text">За эти сутки — ни одного явного предупреждения.</p>';
+  const body = sensorStripSvg(data, bare ? 1000 : 1300) +
+    '<p class="note"><span class="swatches"><i class="sw k-lie"></i>лежит <i class="sw k-feed"></i>у корма ' +
+    '<i class="sw k-water"></i>у поилки <i class="sw k-stand"></i>стоит, ходит <i class="sw warn"></i>предупреждение</span></p>' +
+    list + '<p class="note">' + SENSOR_NOTE + "</p>";
+  return bare ? '<div class="mini"><div class="mini-title">' + esc(title) + "</div>" + body + "</div>"
+    : '<div class="panel"><h2>' + esc(title) + '</h2><div class="body">' + body + "</div></div>";
+}
+function fillLater(id, promise) {
+  promise.then(html => { const el = document.getElementById(id); if (el) el.innerHTML = html; });
+}
+
+// Доска признаков: что изменилось у кого — и что камера пока не считает (без рамки панели).
+function boardInner(herd) {
   const th = herd.thresholds || {};
   const learning = herd.cows.length && herd.counts.learning === herd.cows.length;
   const chips = arr => arr.length ? arr.map(h =>
-    '<a class="chip lv-' + h.level + '" href="#/cow/' + enc(h.cow_id) + "/" + herd.day + '" title="' +
+    '<a class="chip lv-' + h.level + '" href="#/cows/' + herd.day + "/" + enc(h.cow_id) + '" title="' +
     esc(perDay(h.metric, h.value) + " при её норме " + perDay(h.metric, h.norm)) + '">' +
     esc(h.cow_id) + " <b>" + pct(h.delta_pct) + "</b></a>").join("") : '<span class="dash">—</span>';
   const herdRows = (herd.herd_events || []).map(e =>
     '<tr class="herdrow"><td><b>Всё стадо</b></td><td colspan="2">' + esc(eventText(e)) +
     '. Это не болезнь одной коровы — нормы коров на эти сутки поправлены.</td>' +
     '<td class="look">погода и вентиляция, корм, вода, перегруппировка, обработка</td></tr>').join("");
-  const rows = herd.board.map(b => {
-    const any = b.strong.length + b.notable.length;
-    return '<tr class="' + (any ? "hit" : "quiet") + '"><td><b>' + esc(b.name) + "</b></td>" +
-      "<td>" + chips(b.strong) + "</td><td>" + chips(b.notable) + "</td>" +
-      '<td class="look">' + (any ? esc(b.look) : "") + "</td></tr>";
-  }).join("");
+  const hit = herd.board.filter(b => b.strong.length + b.notable.length);
+  const quiet = herd.board.filter(b => !(b.strong.length + b.notable.length));
+  const rows = hit.map(b =>
+    '<tr class="hit"><td><b>' + esc(b.name) + "</b></td>" +
+    "<td>" + chips(b.strong) + "</td><td>" + chips(b.notable) + "</td>" +
+    '<td class="look">' + esc(b.look) + "</td></tr>").join("") +
+    (quiet.length ? '<tr class="quiet"><td>Ни у кого</td><td colspan="3">' +
+      esc(quiet.map((b, i) => i ? lower(b.name) : b.name).join(", ")) + "</td></tr>" : "");
   const nm = (herd.not_measured || []).map(i =>
     '<tr class="nm"><td><b>' + esc(i.name) + '</b></td><td colspan="2">' + badge("none", i.status) +
     " камера пока не считает: " + esc(i.what) + '</td><td class="look">' + esc(i.look_at) + "</td></tr>").join("");
-  return '<div class="panel"><h2>Какие признаки есть у коров · ' + ddmm(herd.day) + "</h2>" +
-    (learning ? '<div class="body calm">Норма ещё набирается — признаков пока нет.</div>' : "") +
-    '<table class="t board"><thead><tr><th style="width:17%">признак</th>' +
-    '<th style="width:24%">сильно — далеко от её нормы</th><th style="width:24%">заметно</th>' +
+  return (learning ? '<div class="body calm">Норма ещё набирается — признаков пока нет.</div>' : "") +
+    '<table class="t board"><thead><tr><th style="width:24%">признак</th>' +
+    '<th>сильно</th><th>заметно</th>' +
     "<th>что осмотреть</th></tr></thead><tbody>" + herdRows + rows + nm + "</tbody></table>" +
     '<div class="body note legend">Каждая корова сравнивается с собой. <b>Заметно</b> — отклонение не меньше ' +
-    (th.min_effect_pct || 12) + "% и вдвое больше её обычного колебания; <b>сильно</b> — вчетверо. " +
-    "Один признак — ещё не тревога: статус ставится по сумме признаков и по тому, держатся ли они несколько суток. " +
-    "Нажмите на корову, чтобы открыть её карточку.</div></div>";
+    (th.min_effect_pct || 12) + "% и вдвое больше её обычного колебания; <b>сильно</b> — вчетверо.</div>";
 }
 
 function certainty(e, dayInfo, cow, th) {
@@ -346,87 +342,6 @@ function bindAnswer(box, e, item, redraw) {
   });
 }
 
-function showHerdEvent(e, item, box) {
-  const rows = (e.deviations || []).map(d =>
-    "<tr><td><b>" + esc(signName(d.metric, d.delta_pct)) + "</b></td>" +
-    '<td class="n">' + perDay(d.metric, d.value) + "</td>" +
-    '<td class="n">' + perDay(d.metric, d.baseline) + "</td>" +
-    '<td class="n strong">' + pct(d.delta_pct) + "</td></tr>").join("");
-  box.innerHTML =
-    '<div class="panel"><div class="body">' +
-    '<div class="head"><span class="id">Всё стадо</span>' + badge("herd", "всё стадо") +
-    '<span class="tag">' + esc(fmtDay(e.day)) + "</span></div>" +
-    '<p class="claim">' + esc(eventText(e)) + "</p>" +
-    '<p class="lead">Сдвиг сразу у большинства коров. Так бывает из-за погоды, корма, воды, ' +
-    "перегруппировки или обработки — это не болезнь одной коровы. Нормы отдельных коров на эти сутки " +
-    "поправлены на этот сдвиг, поэтому ложных событий по коровам меньше.</p>" +
-    '<table class="t"><thead><tr><th>признак</th><th class="n">середина по стаду</th>' +
-    '<th class="n">обычно</th><th class="n">сдвиг</th></tr></thead><tbody>' + rows + "</tbody></table>" +
-    '<div class="look-box"><b>Что проверить</b><ul class="look"><li>погоду и вентиляцию в коровнике</li>' +
-    "<li>корм и воду: раздача, поилки</li><li>не было ли перегруппировки, обработки, проверки стельности</li></ul></div>" +
-    answerButtons(e, "Причину нашли — подтверждаю") +
-    '<a class="btn right" href="#/herd/' + e.day + '">Всё стадо за эти сутки</a></div>' +
-    "</div></div>";
-  bindAnswer(box, e, item, () => showHerdEvent(e, item, box));
-}
-
-async function showEvent(e, item, herd) {
-  const box = document.getElementById("detail");
-  if (e.cow_id === "стадо") { showHerdEvent(e, item, box); return; }
-  let cow = null, card = null;
-  try { cow = await api("/api/cows/" + enc(e.cow_id)); } catch (err) { /* нет истории */ }
-  try { card = await api("/api/registry/" + enc(e.cow_id) + "?day=" + e.day); } catch (err) { /* реестра нет */ }
-  const dayInfo = cow ? cow.days.find(d => d.day === e.day) : null;
-  const th = (cow && cow.thresholds) || herd.thresholds || {};
-  const ev = (cow && cow.events.find(x => x.event_id === e.event_id)) || e;
-  const evidence = ev.evidence || {};
-
-  // Все показатели суток, а не только отклонившиеся: видно, что остальное в норме.
-  const inds = dayInfo ? dayInfo.indicators : {};
-  const devKeys = (e.deviations || []).map(d => d.metric);
-  const order = devKeys.concat(METRICS.map(m => m[0]).filter(k => !devKeys.includes(k)));
-  const rows = order.map(k => {
-    const ind = inds[k] || (e.deviations || []).filter(d => d.metric === k)
-      .map(d => ({ value: d.value, norm: d.baseline, delta_pct: d.delta_pct }))[0];
-    if (!ind || ind.value == null) return "";
-    const lv = ind.level ? " lv-" + ind.level : "";
-    return '<tr class="' + (devKeys.includes(k) ? "" : "dim") + '"><td><b>' + metricName(k) + "</b></td>" +
-      '<td class="n' + lv + '">' + perDay(k, ind.value) + "</td>" +
-      '<td class="n">' + perDay(k, ind.norm) + "</td>" +
-      '<td class="n' + lv + '">' + pct(ind.delta_pct) + "</td>" +
-      "<td>" + gauge(k, ind) + "</td>" +
-      '<td class="words' + lv + '">' + esc(distanceWords(ind)) + "</td></tr>";
-  }).join("");
-
-  const lines = String(e.detail || "").split("\n");
-  const look = lines.filter(l => l.includes(" — ")).map(l => "<li>" + esc(l.split(" — ").slice(1).join(" — ")) + "</li>").join("");
-  const top = devKeys[0];
-  const figs = [["animal_crop", "корова в кадре"], ["tag_crop", "крупный план бирки"], ["track_image", "путь за сутки"]]
-    .filter(([k]) => evidence[k])
-    .map(([k, c]) => '<figure><img src="/evidence/' + esc(evidence[k]) + '" alt=""><figcaption>' + c + "</figcaption></figure>").join("");
-
-  box.innerHTML =
-    '<div class="panel"><div class="body">' +
-    '<div class="head"><a class="id" href="#/cow/' + enc(e.cow_id) + "/" + e.day + '">' + esc(e.cow_id) + "</a>" +
-    badge(EVENT_STATUS[e.severity]) + '<span class="tag">' + esc(fmtDay(e.day)) + "</span></div>" +
-    '<p class="claim">' + esc(eventText(e)) + "</p>" +
-    registryLine(card) +
-    certainty(e, dayInfo, cow, th) +
-    '<table class="t dev"><thead><tr><th>признак</th><th class="n">эти сутки</th><th class="n">её обычный день</th>' +
-    '<th class="n">разница</th><th>где относительно нормы</th><th></th></tr></thead><tbody>' + rows + "</tbody></table>" +
-    '<div class="gauge-legend note">Полоса — её обычные сутки, черта — середина нормы, точка — эти сутки.</div>' +
-    (look ? '<div class="look-box"><b>Что осмотреть</b><ul class="look">' + look + "</ul></div>" : "") +
-    (cow && top ? '<div class="mini"><div class="mini-title">' + esc(metricName(top)) + " по дням — " +
-      esc(METRICS.find(m => m[0] === top)[2]) + "</div>" + chart(cow.days, top, e.day, 150, 1000) + "</div>" : "") +
-    (figs ? '<div class="proof">' + figs + "</div>" : "") +
-    '<p class="note">Система не ставит диагноз: она показывает, что изменилось у коровы по сравнению с ней самой. Причину определяет ветврач.</p>' +
-    answerButtons(e, "Осмотрел — подтверждаю") +
-    '<a class="btn right" href="#/cow/' + enc(e.cow_id) + "/" + e.day + '">Карточка коровы</a></div>' +
-    "</div></div>";
-  bindAnswer(box, e, item, () => showEvent(e, item, herd));
-}
-
-// ---------------------------------------------------------------- Стадо
 
 function signsText(row) {
   if (row.status === "learning") return '<span class="muted">система запоминает её обычный день</span>';
@@ -443,47 +358,6 @@ function metricCell(key, ind) {
   return '<td class="m' + lv + '"><div class="val">' + num(key, ind.value) + "</div>" + sub + "</td>";
 }
 
-async function pageHerd(args) {
-  const want = args[0] ? "?day=" + enc(args[0]) : "";
-  const h = await api("/api/herd" + want);
-  rememberSigns(h.sign_names);
-  if (!h.day) {
-    $app.innerHTML = '<h1>Стадо</h1><p class="empty">Суточных данных пока нет.</p>';
-    return;
-  }
-  const head = METRICS.map(m => '<th class="n">' + m[1] + ", " + m[3] + "</th>").join("");
-  const rows = h.cows.map(c =>
-    '<tr class="click" data-cow="' + esc(c.cow_id) + '">' +
-    '<td><span class="cow">' + esc(c.cow_id) + "</span></td>" +
-    "<td>" + badge(c.status, c.status_label) + "</td>" +
-    '<td class="signs">' + signsText(c) + "</td>" +
-    METRICS.map(([k]) => metricCell(k, c.indicators[k])).join("") +
-    '<td class="n">' + String(c.observed_h).replace(".", ",") + "</td></tr>").join("");
-
-  const catalog = h.indicators.map(i =>
-    "<tr" + (i.status === "работает" ? "" : ' class="nm"') + "><td><b>" + esc(i.name) + "</b></td>" +
-    "<td>" + esc(i.what) + "</td><td>" + esc(i.source) + "</td><td>" +
-    badge(i.status === "работает" ? "ok" : i.status === "косвенно" ? "watch" : "none", i.status) + "</td>" +
-    "<td>" + esc(i.look_at) + "</td></tr>").join("");
-
-  $app.innerHTML =
-    '<div class="pagehead"><h1>Стадо — ' + esc(fmtDay(h.day)) + "</h1>" + daySwitch(h.days, h.day, "#/herd/") + "</div>" +
-    countsStrip(h.counts, h.cows.length) +
-    '<div class="panel"><table class="t herd"><thead><tr><th>корова</th><th>статус</th><th>что изменилось</th>' +
-    head + '<th class="n">видна, ч</th></tr></thead><tbody>' + rows + "</tbody></table>" +
-    '<div class="body note legend">В каждой ячейке — значение за сутки, ниже — её собственная норма и разница. ' +
-    '<span class="sg lv-notable">заметно</span> — вдвое дальше её обычного колебания, ' +
-    '<span class="sg lv-strong">сильно</span> — вчетверо. Нажмите на строку, чтобы открыть корову.</div></div>' +
-    boardPanel(h) +
-    '<div class="panel"><h2>Какие признаки считает система</h2>' +
-    '<table class="t"><thead><tr><th>признак</th><th>как считается</th><th>откуда</th><th>состояние</th>' +
-    "<th>что осмотреть при отклонении</th></tr></thead><tbody>" + catalog + "</tbody></table></div>";
-
-  document.querySelectorAll("tr[data-cow]").forEach(tr =>
-    tr.onclick = () => { location.hash = "#/cow/" + enc(tr.dataset.cow) + "/" + h.day; });
-}
-
-// ---------------------------------------------------------------- Корова
 
 function chart(days, key, markDay, height, width) {
   const W = width || 440, H = height || 170, L = 54, R = 10, T = 10, B = 22;
@@ -530,166 +404,293 @@ function chart(days, key, markDay, height, width) {
     band + median + mark + line + dots + ticks + xl + "</svg>";
 }
 
-async function pageCow(args) {
-  const id = decodeURIComponent(args[0] || "");
-  const c = await api("/api/cows/" + enc(id));
-  rememberSigns(c.sign_names);
-  if (!c.days.length) {
-    $app.innerHTML = '<h1>' + esc(id) + '</h1><p class="empty">Суточных данных нет — только события.</p>';
+// ---------------------------------------------------------------- Коровы
+//
+// Одна страница вместо «Сегодня», «Стадо» и «Корова»: слева — кому нужна
+// помощь (явные предупреждения и события суток) и все коровы, справа —
+// карточка выбранной коровы. Данные — датчики фермы MmCows.
+
+let cowsCtx = null;
+
+async function pageCows(args) {
+  const summary = await api("/api/summary");
+  const days = summary.days || [];
+  if (!days.length) {
+    $app.innerHTML = '<div class="panel"><div class="body">' +
+      "<h1>Данных пока нет</h1>" +
+      '<p class="lead">Карточки появятся после обработки записей: норма коровы строится по нескольким ' +
+      "спокойным суткам, поэтому первые дни система только учится.</p>" +
+      "<p>Обработать запись камеры за сутки: <code>cowid process запись.mp4 --day 2026-09-16</code></p>" +
+      "<p>Загрузить реальные суточные данные MmCows для показа: <code>cowid import-mmcows</code></p>" +
+      "</div></div>";
     return;
   }
-  const allDays = c.days.map(d => d.day);
-  const cur = c.days.find(d => d.day === args[1]) || c.days[c.days.length - 1];
-  const prefix = "#/cow/" + enc(c.cow_id) + "/";
-  let card = null;
-  try { card = await api("/api/registry/" + enc(c.cow_id) + "?day=" + cur.day); } catch (e) { /* реестра нет */ }
+  const day = args.find(a => days.includes(a)) || days[days.length - 1];
+  const want = args.find(a => !days.includes(a));
+  const [events, herd, sensor] = await Promise.all([api("/api/events?limit=5000"), api("/api/herd?day=" + day),
+    api("/api/sensor-alerts?day=" + day).catch(() => ({ alerts: [] }))]);
+  rememberSigns(herd.sign_names);
+  const list = events.filter(e => e.day === day).sort(byUrgency);
+  const alerts = sensor.alerts || [];
+  const attention = alerts.map(a => ({ cow: a.cow, kind: "sensor", a }))
+    .concat(list.map(e => ({ cow: e.cow_id, kind: e.cow_id === "стадо" ? "herd" : "event", e })));
+  const first = attention.find(x => x.kind !== "herd");
+  const selected = want && herd.cows.some(c => c.cow_id === want) ? want
+    : (first ? first.cow : (herd.cows[0] || {}).cow_id);
+  cowsCtx = { day, herd, list, alerts, summary };
 
-  let said;
-  if (cur.status === "learning") said = "Норма ещё набирается: системе нужно 5 спокойных суток этой коровы.";
-  else if (cur.status === "insufficient") said = "Корова была видна меньше часа — эти сутки не оцениваются.";
-  else if (!cur.signs.length) said = "Все признаки в пределах её собственной нормы.";
-  const signs = cur.signs.map(s =>
-    '<li><b class="lv-' + s.level + '">' + esc(s.name) + " " + pct(s.delta_pct) + "</b> (" + LEVEL[s.level] + "): " +
-    esc(perDay(s.metric, s.value)) + (isShare(s.metric) ? " в сутки" : "") + " вместо обычных " +
-    esc(perDay(s.metric, s.norm)) + (s.look ? ' <span class="muted">— ' + esc(s.look) + "</span>" : "") +
-    "</li>").join("");
-  const normRows = METRICS.map(([k, name]) => {
+  $app.innerHTML =
+    '<div class="pagehead"><h1>Коровы — ' + esc(fmtDay(day)) + "</h1>" + daySwitch(days, day, "#/cows/") + "</div>" +
+    '<p class="note src-note">Кому нужна помощь и почему. Данные — датчики фермы MmCows (США): нога, радиометка, удой; ' +
+    herd.cows.length + " коров, " + ddmm(days[0]) + "–" + ddmm(days[days.length - 1]) +
+    ". Камера считает те же признаки по видео — вкладка «Камера».</p>" +
+    countsStrip(herd.counts, herd.cows.length, summary.events_by_status, alerts.length) +
+    '<div class="cols cows-page"><div>' +
+    '<div class="panel"><h2>Внимание · ' + attention.length + "</h2>" +
+    (attention.length ? attention.map((x, i) => attentionItem(x, i)).join("")
+      : '<div class="body calm">Все коровы в пределах своей нормы.</div>') + "</div>" +
+    '<div class="panel"><h2>Все коровы</h2>' + herd.cows.map(c => cowItem(c, alerts)).join("") + "</div>" +
+    '<details class="panel"><summary><h2>Признаки по стаду</h2></summary>' + boardInner(herd) + "</details>" +
+    '</div><div id="cow-detail"></div></div>';
+
+  document.querySelectorAll("[data-pick]").forEach(el => el.onclick = () => {
+    const x = el.dataset.i != null ? attention[+el.dataset.i] : null;
+    if (x && x.kind === "herd") { markPicked(el); showHerdEvent(x.e); return; }
+    history.replaceState(null, "", "#/cows/" + day + "/" + enc(el.dataset.cow));
+    showCow(el.dataset.cow);
+  });
+  if (selected) showCow(selected);
+}
+
+function attentionItem(x, i) {
+  let tag, text;
+  if (x.kind === "sensor") {
+    tag = '<span class="st st-alert">' + (x.a.kind === "feed_gap" ? "долго не ела" : "долго лежит") + "</span>";
+    text = sensorAlertText(x.a);
+  } else if (x.kind === "herd") {
+    tag = badge("herd", "всё стадо");
+    text = eventText(x.e);
+  } else {
+    tag = badge(EVENT_STATUS[x.e.severity]);
+    text = eventText(x.e);
+  }
+  return '<div class="ev click" data-pick data-i="' + i + '" data-cow="' + esc(x.cow) + '">' +
+    '<div class="ev-top"><span class="cow">' + (x.kind === "herd" ? "Всё стадо" : esc(x.cow)) + "</span>" + tag +
+    (x.e ? '<span class="tag right">' + esc(ANSWER[x.e.status] || "") + "</span>" : "") + "</div>" +
+    '<div class="ev-text">' + esc(text) + "</div></div>";
+}
+
+// Явное предупреждение важнее суточного статуса: «в норме» рядом с ним сбивает с толку.
+function alertBadge(a) {
+  return '<span class="st st-alert">' + (a.kind === "feed_gap" ? "долго не ела" : "долго лежит") + "</span>";
+}
+function cowItem(c, alerts) {
+  const a = (alerts || []).find(x => x.cow === c.cow_id);
+  return '<div class="cow-row click" data-pick data-cow="' + esc(c.cow_id) + '">' +
+    '<span class="cow">' + esc(c.cow_id) + "</span>" + (a && c.status === "ok" ? alertBadge(a) : badge(c.status, c.status_label)) +
+    '<span class="cow-signs">' + (a && !c.signs.length ? '<span class="sg lv-strong">' + esc(a.kind === "feed_gap"
+      ? "не ела " + hm(a.hours) : "лежала " + hm(a.hours)) + "</span>" : signsText(c)) + "</span></div>";
+}
+
+function markPicked(el) {
+  document.querySelectorAll("[data-pick]").forEach(x => x.classList.remove("on"));
+  if (el) el.classList.add("on");
+}
+
+async function showCow(id) {
+  const ctx = cowsCtx;
+  const box = document.getElementById("cow-detail");
+  if (!box || !ctx) return;
+  markPicked(null);
+  document.querySelectorAll('[data-pick][data-cow="' + id + '"]').forEach(x => x.classList.add("on"));
+  const day = ctx.day;
+  let c, card = null;
+  try { c = await api("/api/cows/" + enc(id)); } catch (e) { box.innerHTML = ""; return; }
+  try { card = await api("/api/registry/" + enc(id) + "?day=" + day); } catch (e) { /* реестра нет */ }
+  if (cowsCtx !== ctx) return;                       // пока грузилось, выбрали другие сутки
+  const cur = c.days.find(d => d.day === day);
+  const evs = c.events.filter(e => e.day === day).sort(byUrgency);
+  const al = ctx.alerts.filter(a => a.cow === id);
+  const th = c.thresholds || ctx.herd.thresholds || {};
+
+  // Что случилось — одной-двумя строками.
+  let claims = al.map(a => '<p class="claim lv-strong">' + esc(sensorAlertText(a)[0].toUpperCase() +
+    sensorAlertText(a).slice(1)) + '</p><p class="claim-why">' + esc(sensorAlertWhy(a)) + "</p>").join("");
+  if (al.length && cur && cur.status === "ok") {
+    claims += '<p class="note">Суточные итоги при этом в пределах её нормы — такое видно только по ленте суток.</p>';
+  }
+  claims += evs.map(e => '<p class="claim">' + esc(eventText(e)) + "</p>").join("");
+  if (!claims) {
+    claims = '<p class="calm">' + (!cur ? "За эти сутки данных нет."
+      : cur.status === "learning" ? "Норма ещё набирается: нужно 5 спокойных суток этой коровы."
+        : cur.status === "insufficient" ? "Корова была видна меньше часа — эти сутки не оцениваются."
+          : "Все признаки в пределах её собственной нормы.") + "</p>";
+  }
+
+  const normRows = cur ? METRICS.map(([k, name]) => {
     const ind = cur.indicators[k] || {};
     if (ind.value == null) return "";
     const lv = ind.level ? " lv-" + ind.level : "";
-    return "<tr><td><b>" + name + "</b></td>" +
-      '<td class="n">' + perDay(k, ind.norm) + "</td>" +
+    return "<tr" + (ind.level ? "" : ' class="dim"') + "><td><b>" + name + "</b></td>" +
       '<td class="n' + lv + '">' + perDay(k, ind.value) + "</td>" +
+      '<td class="n">' + perDay(k, ind.norm) + "</td>" +
       '<td class="n' + lv + '">' + pct(ind.delta_pct) + "</td>" +
       "<td>" + gauge(k, ind) + '</td><td class="words' + lv + '">' + esc(distanceWords(ind)) + "</td></tr>";
-  }).join("");
-
+  }).join("") : "";
+  const top = evs[0];
+  const look = top ? String(top.detail || "").split("\n").filter(l => l.includes(" — "))
+    .map(l => "<li>" + esc(l.split(" — ").slice(1).join(" — ")) + "</li>").join("") : "";
   const charts = METRICS.map(([k, name, what]) =>
-    '<div class="panel"><h2>' + esc(name) + " — " + esc(what) + "</h2>" +
-    '<div class="body">' + chart(c.days, k, cur.day) + "</div></div>").join("");
+    '<div><div class="mini-title">' + esc(name) + " — " + esc(what) + "</div>" + chart(c.days, k, day, 150, 520) + "</div>").join("");
   const dayRows = c.days.slice().reverse().map(d =>
-    '<tr class="click' + (d.day === cur.day ? " on" : "") + '" data-day="' + d.day + '">' +
+    '<tr class="click' + (d.day === day ? " on" : "") + '" data-day="' + d.day + '">' +
     '<td class="n">' + ddmm(d.day) + "</td><td>" + badge(d.status, d.status_label) + "</td>" +
     '<td class="signs">' + signsText(d) + "</td>" +
-    METRICS.map(([k]) => metricCell(k, d.indicators[k])).join("") +
-    '<td class="n">' + String(d.observed_h).replace(".", ",") + "</td></tr>").join("");
-  const evRows = c.events.map(e =>
-    '<tr class="click" data-day="' + e.day + '"><td class="n">' + ddmm(e.day) + "</td><td>" + badge(EVENT_STATUS[e.severity]) + "</td>" +
-    "<td>" + esc(eventText(e)) + '</td><td class="tag">' + esc(ANSWER[e.status]) + "</td></tr>").join("");
+    METRICS.map(([k]) => metricCell(k, d.indicators[k])).join("") + "</tr>").join("");
 
-  $app.innerHTML =
-    '<div class="pagehead"><div class="head"><span class="id">' + esc(c.cow_id) + "</span>" + badge(cur.status, cur.status_label) +
-    '<span class="tag">' + esc(c.id_source ? SOURCE[c.id_source] || c.id_source : "") + "</span>" +
-    '<a class="tag" href="#/herd/' + cur.day + '">← всё стадо</a></div>' + daySwitch(allDays, cur.day, prefix) + "</div>" +
-    '<div class="cols cowpage"><div>' +
-    '<div class="panel"><h2>Что изменилось · ' + esc(fmtDay(cur.day)) + "</h2><div class=\"body\">" +
-    (said ? '<p class="calm">' + esc(said) + "</p>" : '<ul class="signs-list">' + signs + "</ul>") +
-    '<p class="note">Видна ' + String(cur.observed_h).replace(".", ",") + " ч за сутки" +
-    (cur.episode_days >= 2 ? " · признаки держатся " + cur.episode_days + "-е сутки подряд" : "") + "</p></div></div>" +
-    (card ? '<div class="panel"><h2>Из реестра фермы · на ' + esc(fmtDay(card.as_of)) + '</h2><div class="body">' +
-      registryHtml(card) + "</div></div>" : "") + "</div>" +
-    '<div class="panel"><h2>Её норма и эти сутки</h2><table class="t dev"><thead><tr><th>признак</th>' +
-    '<th class="n">её обычный день</th><th class="n">эти сутки</th><th class="n">разница</th>' +
-    "<th>где относительно нормы</th><th></th></tr></thead><tbody>" + normRows + "</tbody></table>" +
-    '<div class="body note">Норма — по её последним спокойным суткам (до 14). Полоса — её обычные сутки, черта — середина, точка — эти сутки.</div></div>' +
+  box.innerHTML =
+    '<div class="panel cow-card"><div class="body">' +
+    '<div class="head"><span class="id">' + esc(id) + "</span>" +
+    (al.length && cur && cur.status === "ok" ? alertBadge(al[0]) : cur ? badge(cur.status, cur.status_label) : "") +
+    '<span class="tag">' + esc(fmtDay(day)) + (c.id_source ? " · " + esc(SOURCE[c.id_source] || c.id_source) : "") + "</span></div>" +
+    claims + registryLine(card) +
+    '<div id="cow-strip"></div>' +
+    (normRows ? '<h3 class="sub-h">Её норма и эти сутки</h3><table class="t dev"><thead><tr><th>признак</th>' +
+      '<th class="n">эти сутки</th><th class="n">её обычный день</th><th class="n">разница</th>' +
+      "<th>где относительно нормы</th><th></th></tr></thead><tbody>" + normRows + "</tbody></table>" +
+      '<p class="note">Полоса — её обычные сутки, черта — середина нормы, точка — эти сутки.</p>' : "") +
+    (look ? '<div class="look-box"><b>Что осмотреть</b><ul class="look">' + look + "</ul></div>" : "") +
+    (top ? answerButtons(top, "Осмотрел — подтверждаю") : "") +
+    '<p class="note">Система не ставит диагноз: она показывает, что изменилось у коровы по сравнению с ней самой.</p>' +
     "</div>" +
-    '<p class="lead">Графики: линия — её значение по суткам, зелёная полоса — её собственная норма, пунктир — середина нормы, ' +
-    "вертикальная черта — выбранные сутки. Крупные точки — отмеченные сутки (наведите, чтобы увидеть статус).</p>" +
-    '<div class="charts">' + charts + "</div>" +
-    '<div class="panel"><h2>События</h2>' + (evRows ? '<table class="t"><tbody>' + evRows + "</tbody></table>" :
-      '<div class="body empty">Событий нет</div>') + "</div>" +
-    '<div class="panel"><h2>Сутки — нажмите, чтобы выбрать</h2><table class="t herd"><thead><tr><th class="n">сутки</th><th>статус</th>' +
+    (top ? '<details class="sub"><summary>Насколько уверены</summary><div class="body">' +
+      certainty(top, cur, c, th) + "</div></details>" : "") +
+    '<details class="sub"><summary>Графики по дням</summary><div class="body charts2">' + charts + "</div></details>" +
+    (card ? '<details class="sub"><summary>Реестр фермы · на ' + esc(fmtDay(card.as_of)) + '</summary><div class="body">' +
+      registryHtml(card) + "</div></details>" : "") +
+    '<details class="sub"><summary>Все сутки</summary><table class="t herd"><thead><tr><th class="n">сутки</th><th>статус</th>' +
     "<th>что изменилось</th>" + METRICS.map(m => '<th class="n">' + m[1] + ", " + m[3] + "</th>").join("") +
-    '<th class="n">видна, ч</th></tr></thead><tbody>' + dayRows + "</tbody></table></div>";
+    "</tr></thead><tbody>" + dayRows + "</tbody></table></details>" +
+    "</div>";
 
-  document.querySelectorAll("tr[data-day]").forEach(tr =>
-    tr.onclick = () => { location.hash = prefix + tr.dataset.day; });
+  if (top) bindAnswer(box, top, null, () => showCow(id));
+  box.querySelectorAll("tr[data-day]").forEach(tr =>
+    tr.onclick = () => { location.hash = "#/cows/" + tr.dataset.day + "/" + enc(id); });
+  fillLater("cow-strip", sensorStripPanel(id, day, "Её неделя по датчикам — " + ddmm(day) + " и 6 прошлых", true));
+}
+
+function showHerdEvent(e) {
+  const box = document.getElementById("cow-detail");
+  const rows = (e.deviations || []).map(d =>
+    "<tr><td><b>" + esc(signName(d.metric, d.delta_pct)) + "</b></td>" +
+    '<td class="n">' + perDay(d.metric, d.value) + "</td>" +
+    '<td class="n">' + perDay(d.metric, d.baseline) + "</td>" +
+    '<td class="n strong">' + pct(d.delta_pct) + "</td></tr>").join("");
+  box.innerHTML =
+    '<div class="panel cow-card"><div class="body">' +
+    '<div class="head"><span class="id">Всё стадо</span>' + badge("herd", "всё стадо") +
+    '<span class="tag">' + esc(fmtDay(e.day)) + "</span></div>" +
+    '<p class="claim">' + esc(eventText(e)) + "</p>" +
+    '<p class="lead">Сдвиг сразу у большинства коров. Так бывает из-за погоды, корма, воды, ' +
+    "перегруппировки или обработки — это не болезнь одной коровы. Нормы отдельных коров на эти сутки " +
+    "поправлены на этот сдвиг, поэтому ложных событий по коровам меньше.</p>" +
+    '<table class="t"><thead><tr><th>признак</th><th class="n">середина по стаду</th>' +
+    '<th class="n">обычно</th><th class="n">сдвиг</th></tr></thead><tbody>' + rows + "</tbody></table>" +
+    '<div class="look-box"><b>Что проверить</b><ul class="look"><li>погоду и вентиляцию в коровнике</li>' +
+    "<li>корм и воду: раздача, поилки</li><li>не было ли перегруппировки, обработки, проверки стельности</li></ul></div>" +
+    answerButtons(e, "Причину нашли — подтверждаю") + "</div></div>";
+  bindAnswer(box, e, null, () => showHerdEvent(e));
 }
 
 // ---------------------------------------------------------------- Камера
+
+// Пока камера выключена — что нажать, а не пустой чёрный кадр.
+const OFF_HTML = '<div class="off"><b>Камера выключена</b><br>Выберите источник сверху и нажмите «Включить».' +
+  "<br>Для показа — «Демо: ферма MmCows»: видео реальной фермы, 16 коров с номерами.</div>";
 
 async function pageLive() {
   const [sources, state, phone] = await Promise.all([api("/api/live/sources"), api("/api/live/state"),
     api("/api/live/phone").catch(() => ({}))]);
   tracksMode = "";
-  selectedCow = null;
+  selectedCow = (state.focus && state.focus.cow) || null;
   const running = state.source && sources.find(s => s.id === state.source.id || (s.kind === state.source.kind && s.kind !== "playlist"));
   let chosen = (running && running.id) || (sources[0] && sources[0].id);
   const kindOf = id => (sources.find(s => s.id === id) || {}).kind;
   const opts = sources.map(s =>
-    '<label class="opt' + (s.id === chosen ? " on" : "") + '" data-id="' + esc(s.id) + '">' +
-    '<input type="radio" name="src" value="' + esc(s.id) + '"' + (s.id === chosen ? " checked" : "") + ">" +
-    '<div class="ttl">' + esc(s.title) + '</div><div class="sub">' + esc(s.note) + "</div></label>").join("");
+    '<option value="' + esc(s.id) + '"' + (s.id === chosen ? " selected" : "") + ">" + esc(s.title) + "</option>").join("");
 
   $app.innerHTML =
+    '<div class="pagehead"><h1>Камера</h1><div class="srcbar">' +
+    '<select class="txt" id="src" aria-label="источник">' + opts + "</select>" +
+    '<span id="src-fields"></span>' +
+    '<button class="btn primary" id="start">Включить</button>' +
+    '<button class="btn danger" id="stop">Выключить</button></div></div>' +
+    '<p class="note src-note" id="src-note"></p><div id="src-help"></div>' +
     '<div class="cols live">' +
-    '<div><div class="panel"><h2>Источник</h2>' + opts +
-    '<div class="body"><div id="src-extra"></div>' +
-    '<div class="actions"><button class="btn primary" id="start">Включить</button>' +
-    '<button class="btn danger" id="stop">Выключить</button></div>' +
-    '<p class="note" style="margin-top:8px">Живой режим — для установки камеры и показа. ' +
-    "Суточные признаки считаются ночной обработкой записи.</p></div></div></div>" +
-    '<div><div class="panel"><h2 id="src-title">Кадр</h2><div class="stream-wrap"><div class="stream" id="stream">' +
-    '<div class="off">Камера выключена</div></div>' +
+    '<div class="panel"><h2 id="src-title">Кадр</h2><div class="stream-wrap"><div class="stream" id="stream">' +
+    OFF_HTML + "</div>" +
     '<video id="cam-preview" class="cam-preview" playsinline muted hidden></video></div>' +
-    '<div class="body note" id="clip"></div></div></div>' +
-    '<div><div class="panel"><h2>Сейчас</h2><div class="body">' +
-    '<div class="bigrow"><div><div class="bignum" id="n-in">0</div><div class="k">коров в кадре</div></div>' +
+    '<div class="body framebar"><span class="note" id="clip"></span>' +
+    '<span class="swatches"><i class="sw known"></i>узнана <i class="sw unknown"></i>«не знаю» ' +
+    '<i class="sw lying"></i>лежит <i class="sw warn"></i>внимание <i class="sw focus"></i>выбранная</span></div></div>' +
+    "<div>" +
+    '<div class="panel"><h2>Сейчас</h2><div class="body">' +
+    '<div class="clock-row" id="clock-row" hidden><span class="bigclock" id="n-clock">—</span>' +
+    '<span class="k">время на ферме</span></div>' +
+    '<div class="bigrow"><div><div class="bignum" id="n-in">0</div><div class="k">в кадре</div></div>' +
     '<div id="known-box"><div class="bignum" id="n-known">0</div><div class="k">узнано</div></div>' +
     '<div id="pose-box" hidden><div class="bignum lying" id="n-lie">0</div><div class="k">лежат</div></div></div>' +
     '<div class="kv" id="id-box"><span class="k">«не знаю»</span><span class="v" id="n-unknown">0</span>' +
-    '<span class="k">коров в реестре камеры</span><span class="v" id="n-gallery">—</span>' +
-    '<span class="k">время на ферме</span><span class="v" id="n-clock">—</span></div>' +
+    '<span class="k">коров в реестре камеры</span><span class="v" id="n-gallery">—</span></div>' +
     '<p class="note" id="no-gallery" hidden>Коровы этого источника не зарегистрированы — номера не ставятся, ' +
     "считаются коровы в кадре, движение и время.</p></div></div>" +
-    '<div class="panel"><h2>Камера</h2><div class="body">' +
-    '<div class="health" id="c-problems">—</div><div class="kv">' +
+    '<div class="panel alert-box" id="alert-box" hidden><h2>Внимание</h2><div class="body" id="alerts"></div></div>' +
+    '<div class="panel" id="roll-box" hidden><h2>Перекличка</h2><div class="body" id="roll"></div></div>' +
+    '<details class="panel cam-box"><summary><h2>Камера · <span id="c-problems">—</span></h2></summary>' +
+    '<div class="body"><div class="kv">' +
     '<span class="k">разрешение</span><span class="v" id="c-res">—</span>' +
     '<span class="k">кадров/с источника</span><span class="v" id="c-fps">—</span>' +
     '<span class="k">обработка, кадров/с</span><span class="v" id="c-proc">—</span>' +
     '<span class="k">яркость (0–255)</span><span class="v" id="c-bright">—</span>' +
-    '<span class="k">резкость</span><span class="v" id="c-sharp">—</span></div></div></div>' +
+    '<span class="k">резкость</span><span class="v" id="c-sharp">—</span></div>' +
+    '<p class="note">Живой режим — для установки камеры и показа. Суточные признаки считаются ночной обработкой записи.</p>' +
+    "</div></details>" +
     "</div></div>" +
+    '<div id="cow-card"></div>' +
     '<div class="panel" id="cows-box" hidden><h2 id="cows-title">Узнанные коровы — что делали и что это значит</h2>' +
-    '<table class="t cows"><thead><tr><th>корова</th><th>из реестра фермы</th><th>сейчас</th>' +
-    '<th class="n">на виду</th><th class="n">лежит</th><th class="n">лежит подряд</th>' +
-    '<th class="n">у корма</th><th class="n">у поилки</th><th>что это значит</th></tr></thead>' +
+    '<table class="t cows"><thead><tr><th>корова</th><th>сейчас</th>' +
+    '<th class="tl-col">лента за показ</th><th class="n">лежит</th>' +
+    '<th class="n">у корма</th><th>что это значит</th></tr></thead>' +
     '<tbody id="cows"></tbody></table>' +
     '<div class="body note legend" id="cows-note"></div></div>' +
-    '<div id="cow-card"></div>' +
     '<details class="panel tracks-box"><summary><h2 id="tracks-title">Дорожки в кадре (для проверки)</h2></summary>' +
     '<table class="t"><thead id="tracks-head"></thead><tbody id="tracks"></tbody></table>' +
     '<div class="body note" id="tracks-more"></div>' +
     '<div class="body note">Номер дорожки ставится голосованием её кадров: хотя бы 3 голоса и больше половины за одну корову. ' +
     "До этого — «?». Серая рамка — честное «не знаю», синяя — корова лежит.</div></details>";
 
-  // Поля под выбранным источником: номер камеры, ссылка, как стоит камера, адрес для телефона.
+  // Поля рядом с выбранным источником: номер камеры, ссылка, как стоит камера; под ним — описание.
   function renderExtra() {
     const kind = kindOf(chosen);
-    const view = '<div class="tag">Как стоит камера</div><select class="txt" id="view">' +
-      '<option value="side"' + (kind === "browser" ? " selected" : "") + ">сбоку или под углом — готовая модель, без номеров</option>" +
-      '<option value="top"' + (kind !== "browser" ? " selected" : "") + ">сверху над проходом — наш детектор и галерея</option></select>";
+    const view = '<select class="txt" id="view" aria-label="как стоит камера" title="как стоит камера">' +
+      '<option value="side"' + (kind === "browser" ? " selected" : "") + ">сбоку или под углом — без номеров</option>" +
+      '<option value="top"' + (kind !== "browser" ? " selected" : "") + ">сверху над проходом — с номерами</option></select>";
     let html = "";
     if (kind === "camera") {
-      html = '<div class="tag">Номер камеры: 0 — встроенная, 1 — USB</div>' +
-        '<input class="txt mono" id="camidx" value="0">' + view;
+      html = '<input class="txt mono camidx" id="camidx" value="0" title="0 — встроенная, 1 — USB" aria-label="номер камеры">' + view;
     } else if (kind === "url") {
-      html = '<div class="tag">Ссылка на поток</div>' +
-        '<input class="txt mono" id="url" placeholder="rtsp://… или http://адрес-телефона:8080/video">' + view;
+      html = '<input class="txt mono url" id="url" placeholder="rtsp://… или http://адрес-телефона:8080/video" aria-label="ссылка на поток">' + view;
     } else if (kind === "browser") {
-      html = view + phoneHint(phone);
+      html = view;
     }
-    const box = document.getElementById("src-extra");
-    box.innerHTML = html;
-    box.hidden = !html;
+    document.getElementById("src-fields").innerHTML = html;
+    document.getElementById("src-note").textContent = (sources.find(s => s.id === chosen) || {}).note || "";
+    const help = document.getElementById("src-help");
+    help.innerHTML = kind === "browser" ? '<div class="panel"><div class="body">' + phoneHint(phone) + "</div></div>" : "";
   }
   renderExtra();
 
-  document.querySelectorAll("label.opt").forEach(l => l.onclick = () => {
-    document.querySelectorAll("label.opt").forEach(x => x.classList.remove("on"));
-    l.classList.add("on");
-    if (chosen !== l.dataset.id) { chosen = l.dataset.id; renderExtra(); }
-  });
+  document.getElementById("src").onchange = ev => { chosen = ev.target.value; renderExtra(); };
   document.getElementById("start").onclick = async () => {
     const kind = kindOf(chosen);
     const view = document.getElementById("view");
@@ -703,6 +704,9 @@ async function pageLive() {
       body.source = chosen;
     }
     stopBrowserCamera();
+    const startBtn = document.getElementById("start");
+    startBtn.disabled = true;
+    startBtn.textContent = "Включается…";
     try {
       await api("/api/live/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       selectedCow = null;
@@ -713,18 +717,30 @@ async function pageLive() {
     } catch (err) {
       if (kind === "browser") await api("/api/live/stop", { method: "POST" }).catch(() => {});
       alert("Не удалось включить: " + err.message);
+    } finally {
+      startBtn.disabled = false;
+      startBtn.textContent = "Включить";
     }
   };
   document.getElementById("stop").onclick = async () => {
     stopBrowserCamera();
     await api("/api/live/stop", { method: "POST" });
-    document.getElementById("stream").innerHTML = '<div class="off">Камера выключена</div>';
+    selectedCow = null;
+    document.getElementById("cow-card").innerHTML = "";
+    document.getElementById("stream").innerHTML = OFF_HTML;
   };
-  document.getElementById("cows").onclick = ev => {
-    const tr = ev.target.closest("tr[data-cow]");
-    if (!tr) return;
-    selectedCow = tr.dataset.cow;
-    renderCowCard();
+  // Нажатие на корову — в таблице или в перекличке — подсвечивает её на кадре.
+  // Таблицы перерисовываются раз в секунду, поэтому ловим нажатие кнопки мыши,
+  // а не «клик»: к отпусканию строка может быть уже другой.
+  const pick = ev => {
+    const el = ev.button === 0 && ev.target.closest("[data-cow]");
+    if (el) selectCow(el.dataset.cow === selectedCow ? null : el.dataset.cow);
+  };
+  document.getElementById("cows").onmousedown = pick;
+  document.getElementById("roll").onmousedown = pick;
+  document.getElementById("alerts").onmousedown = pick;
+  document.getElementById("cow-card").onmousedown = ev => {
+    if (ev.button === 0 && ev.target.closest("[data-unfocus]")) selectCow(null);
   };
   if (state.running) attachStream();
   liveTimer = setInterval(updateLive, 1000);
@@ -854,6 +870,7 @@ let tracksMode = "";
 let selectedCow = null;
 let lastCows = [];
 let lastFarm = null;
+let lastNow = 0;
 
 // Доля времени и обычная доля: «41% · обычно 18%».
 function shareCell(pct, norm, level, own) {
@@ -874,42 +891,182 @@ function signsCell(row) {
     : '<span class="calm-text">как обычно в эти часы</span>';
 }
 
+// ---------------------------------------------------------------- лента дня
+
+const KIND_CLASS = { "лежит": "k-lie", "у корма": "k-feed", "у поилки": "k-water", "стоит": "k-stand" };
+function clockOf(t) {
+  t = ((Math.round(t) % 86400) + 86400) % 86400;
+  return String(Math.floor(t / 3600)).padStart(2, "0") + ":" + String(Math.floor(t % 3600 / 60)).padStart(2, "0");
+}
+// Полоса «что делала»: цвет — занятие, пусто — не видна или не узнана.
+function runRects(runs, x, y, h) {
+  return (runs || []).map(([a, b, k]) => {
+    const xa = x(a), xb = x(Math.max(b, a + 1));
+    return '<rect class="' + (KIND_CLASS[k] || "k-stand") + '" x="' + xa.toFixed(1) + '" y="' + y +
+      '" width="' + Math.max(0.6, xb - xa).toFixed(1) + '" height="' + h + '"><title>' +
+      clockOf(a) + "–" + clockOf(b) + " " + esc(k) + "</title></rect>";
+  }).join("");
+}
+function miniStrip(runs, t0, t1) {
+  if (!runs || !runs.length || t1 <= t0) return "";
+  const W = 200, H = 14;
+  const x = t => Math.min(W, Math.max(0, (t - t0) / (t1 - t0) * W));
+  return '<svg class="tl" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" role="img" aria-label="лента за показ">' +
+    '<rect class="tl-bg" width="' + W + '" height="' + H + '"/>' + runRects(runs, x, 0, H) + "</svg>";
+}
+// Большая лента в карточке: что видела камера по минутам и её обычные часы по датчикам.
+function dayStrip(row, t0, t1) {
+  if (t1 <= t0) return "";
+  const W = 1300, L = 130, R = 30, lane = 22, gap = 7;
+  const lanes = [["камера сейчас", null]];
+  if (row.usual) lanes.push(["обычно лежит", "lying"], ["обычно у корма", "feeder"]);
+  const H = 20 + lanes.length * (lane + gap);
+  const x = t => L + (W - L - R) * Math.min(1, Math.max(0, (t - t0) / (t1 - t0)));
+  let out = '<svg class="tl big" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="лента дня коровы">';
+  // Метки: начало и конец показа всегда, между ними — целые часы, не теснее 70 точек.
+  const marks = [t0];
+  for (let hh = Math.ceil(t0 / 3600); hh * 3600 < t1; hh++) marks.push(hh * 3600);
+  marks.push(t1);
+  let lastX = -1e9;
+  marks.forEach((t, i) => {
+    const px = x(t);
+    const edge = i === 0 || i === marks.length - 1;
+    if (!edge && (px - lastX < 70 || x(t1) - px < 70)) return;
+    if (i === marks.length - 1 && px - lastX < 70) return;      // показ только начался
+    lastX = px;
+    out += '<line class="tick" x1="' + px + '" y1="16" x2="' + px + '" y2="' + H + '"/>' +
+      '<text x="' + px + '" y="12" text-anchor="' + (i === 0 ? "start" : i === marks.length - 1 ? "end" : "middle") + '">' +
+      clockOf(t) + "</text>";
+  });
+  lanes.forEach(([label, key], i) => {
+    const y = 20 + i * (lane + gap);
+    out += '<text class="lane" x="0" y="' + (y + lane / 2 + 5) + '">' + label + "</text>" +
+      '<rect class="tl-bg" x="' + L + '" y="' + y + '" width="' + (W - L - R) + '" height="' + lane + '"/>';
+    if (!key) { out += runRects(row.timeline, x, y, lane); return; }
+    const vals = row.usual[key] || [];
+    for (let hh = Math.floor(t0 / 3600); hh * 3600 < t1; hh++) {
+      const v = vals[((hh % 24) + 24) % 24];
+      if (v == null) continue;
+      const a = x(Math.max(t0, hh * 3600)), b = x(Math.min(t1, (hh + 1) * 3600));
+      // Корм: у коровы редко больше 40% часа — шкала до 40%, иначе всё бледное.
+      const op = key === "feeder" ? Math.min(1, v / 0.4) : v;
+      out += '<rect class="' + (key === "lying" ? "k-lie" : "k-feed") + '" x="' + a.toFixed(1) + '" y="' + y +
+        '" width="' + Math.max(0.6, b - a).toFixed(1) + '" height="' + lane + '" fill-opacity="' + op.toFixed(2) +
+        '"><title>' + clockOf(hh * 3600) + "–" + clockOf((hh + 1) * 3600) + ": " + label + " " +
+        Math.round(100 * v) + "% часа</title></rect>";
+    }
+  });
+  return out + "</svg>";
+}
+function sessionSpan(cows, now) {
+  const starts = cows.filter(r => r.timeline && r.timeline.length).map(r => r.timeline[0][0]);
+  return starts.length ? [Math.min(...starts), Math.max(now || 0, ...cows.map(r => r.last_t || 0))] : [0, 0];
+}
+
+async function selectCow(cow) {
+  selectedCow = cow;
+  try {
+    await api("/api/live/focus", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cow }) });
+  } catch (e) { /* подсветка на кадре не обязательна */ }
+  document.querySelectorAll("#cows tr[data-cow], #roll [data-cow]").forEach(el =>
+    el.classList.toggle("on", el.dataset.cow === selectedCow));
+  const box = document.getElementById("cow-card");
+  if (!cow) { box.innerHTML = ""; return; }
+  renderCowCard();
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// Явные предупреждения: «не подходила к корму 4 ч 10 мин — у неё за 13 суток самое долгое 3 ч 54 мин».
+function updateAlerts(s) {
+  const box = document.getElementById("alert-box");
+  const items = [];
+  (s.cows || []).forEach(r => (r.signs || []).filter(x => x.kind === "alert")
+    .forEach(x => items.push([r.cow, x.text])));
+  box.hidden = !items.length;
+  if (!items.length) return;
+  const html = '<ul class="alert-list">' + items.map(([cow, text]) =>
+    '<li class="click' + (cow === selectedCow ? " on" : "") + '" data-cow="' + esc(cow) + '"><b class="cow">' + esc(cow) +
+    "</b> " + esc(text) + "</li>").join("") + "</ul>" +
+    '<p class="note">Предел — что бывало у этой коровы за 12 других суток по датчикам (день показа не входит); у коров без датчиков — у стада. ' +
+    "Нажмите — корова подсветится на кадре.</p>";
+  const el = document.getElementById("alerts");
+  if (el.innerHTML !== html) el.innerHTML = html;
+}
+
+// Перекличка: кто из зарегистрированных коров на виду, кого давно не видно.
+function updateRoll(s) {
+  const box = document.getElementById("roll-box");
+  const rc = s.rollcall;
+  box.hidden = !rc;
+  if (!rc) return;
+  const here = rc.total - rc.missing;
+  const chip = c => {
+    const cls = c.missing ? " miss" : c.away_min === 0 ? " here" : "";
+    const when = c.away_min === 0 ? (c.now || "в кадре") : c.away_min == null ? "ещё не узнана"
+      : "не видна " + c.away_min + " мин";
+    return '<button class="rc' + cls + (c.cow === selectedCow ? " on" : "") + '" data-cow="' + esc(c.cow) + '" title="' +
+      esc(c.cow + ": " + when + (c.last ? ", последний раз " + c.last : "") + (c.camera ? ", камера " + c.camera : "")) + '">' +
+      '<span class="cow">' + esc(c.cow) + "</span><span>" + esc(c.away_min === 0 ? "в кадре" : c.away_min == null ? "—" : c.away_min + " мин") +
+      "</span></button>";
+  };
+  const missing = rc.cows.filter(c => c.missing);
+  document.getElementById("roll").innerHTML =
+    '<div class="roll-head"><span class="bignum' + (rc.missing ? " miss" : "") + '">' + here + "</span>" +
+    '<span class="k">из ' + rc.total + " на месте<br>не видно дольше " + rc.limit_min + " мин: " +
+    (rc.missing ? "<b>" + rc.missing + "</b>" : "нет") + "</span></div>" +
+    (missing.length ? '<ul class="miss-list">' + missing.map(c => '<li data-cow="' + esc(c.cow) + '" class="click"><b class="cow">' +
+      esc(c.cow) + "</b> " + (c.last ? "последний раз " + esc(c.last) + (c.camera ? ", камера " + c.camera : "")
+        : "не появлялась за " + rc.watched_min + " мин показа") + "</li>").join("") + "</ul>" : "") +
+    '<div class="rc-grid">' + rc.cows.slice().sort((a, b) => a.cow.localeCompare(b.cow)).map(chip).join("") + "</div>" +
+    '<p class="note">Считается время показа, дойка не в счёт. Лежащую корову камера узнаёт хуже, поэтому «не видно» — повод посмотреть, а не тревога.</p>';
+}
+
 function updateCows(s) {
   const box = document.getElementById("cows-box");
   const cows = s.cows || [];
   lastCows = cows;
   lastFarm = s.farm || null;
+  lastNow = s.now_t || 0;
   box.hidden = !cows.length;
   if (!cows.length) return;
+  const farmClock = !!s.clock;
+  const [t0, t1] = sessionSpan(cows, s.now_t);
+  document.querySelector("#cows-box .tl-col").hidden = !farmClock;
   document.getElementById("cows").innerHTML = cows.map(r => {
     const reg = r.registry;
     const leg = reg && reg.last_leg_problem;
+    const now = [r.zone, r.bout_min ? "подряд " + fmtDur(60 * r.bout_min) : ""].filter(Boolean).join(" · ");
     return '<tr class="click' + (r.cow === selectedCow ? " on" : "") + '" data-cow="' + esc(r.cow) + '">' +
-      '<td><span class="cow">' + esc(r.cow) + "</span></td>" +
-      "<td>" + (reg ? esc(reg.summary || "—") + (leg ? '<div class="sub warn-text">' + esc(leg.what) + " " +
-        esc(ddmm(leg.day)) + "</div>" : "") : '<span class="muted">нет в реестре</span>') + "</td>" +
-      "<td>" + esc(r.state || "—") + (r.zone ? '<div class="sub">' + esc(r.zone) + "</div>" : "") + "</td>" +
-      '<td class="n">' + fmtDur(60 * r.seen_min) + "</td>" +
+      '<td><span class="cow">' + esc(r.cow) + "</span>" +
+      (leg ? '<div class="sub warn-text">' + esc(leg.what) + " " + esc(ddmm(leg.day)) + "</div>" : "") +
+      '<div class="sub">на виду ' + esc(fmtDur(60 * r.seen_min)) + "</div></td>" +
+      "<td" + (r.bout_min >= 120 ? ' class="lv-notable"' : "") + ">" + esc(r.state || "—") +
+      (now ? '<div class="sub">' + esc(now) + "</div>" : "") + "</td>" +
+      (farmClock ? '<td class="tl-col">' + miniStrip(r.timeline, t0, t1) + "</td>" : "") +
       shareCell(r.lying_pct, r.lying_norm_pct, signLevel(r, "лежит больше") || signLevel(r, "не ложится"), r.norm_own) +
-      '<td class="n' + (r.bout_min >= 120 ? " lv-notable" : "") + '">' + (r.bout_min ? fmtDur(60 * r.bout_min) : "—") + "</td>" +
       shareCell(r.feeder_pct, r.feeder_norm_pct, signLevel(r, "у кормового"), r.norm_own) +
-      shareCell(r.drinker_pct, r.drinker_norm_pct, signLevel(r, "у поилки"), r.norm_own) +
       '<td class="signs">' + signsCell(r) + "</td></tr>";
   }).join("");
   const farm = s.farm || {};
   document.getElementById("cows-note").innerHTML =
-    "Время — сколько корова была на виду за сеанс (часы фермы). «Обычно» — " +
-    (farm.norms ? "её же обычные часы по датчикам фермы (13 суток); у коров без датчиков — стадо в эти же часы. "
-      : "стадо в эти же часы. ") +
-    (farm.registry ? "Карточка — реальные записи фермы на " + esc(fmtDay(farm.as_of)) + ": лактация, отёл, стельность, болезни. " : "") +
-    "Хромоту камера здесь не видит напрямую — это косвенный признак по поведению. Нажмите на корову, чтобы открыть карточку.";
+    (farmClock ? '<span class="swatches"><i class="sw k-lie"></i>лежит <i class="sw k-feed"></i>у корма ' +
+      '<i class="sw k-water"></i>у поилки <i class="sw k-stand"></i>стоит, пусто — не видна. </span>' : "") +
+    "«Обычно» — " + (farm.norms ? "её обычные часы по датчикам фермы (13 суток); у коров без датчиков — стадо. " : "стадо в эти же часы. ") +
+    (farm.registry ? "Реестр — реальные записи фермы на " + esc(fmtDay(farm.as_of)) + ". " : "") +
+    "Хромота — косвенный признак по поведению, не диагноз. Нажмите на корову — она подсветится на кадре.";
   if (selectedCow) renderCowCard(true);
 }
 
 async function renderCowCard(refreshOnly) {
   const box = document.getElementById("cow-card");
   const row = lastCows.find(r => r.cow === selectedCow);
-  if (!row || !box) return;
+  if (!box) return;
+  if (!row) {
+    box.innerHTML = selectedCow ? '<div class="panel"><div class="body focus-bar"><b class="cow">' + esc(selectedCow) +
+      "</b> пока не узнана в кадре — подсветка включится, когда камера её узнает." +
+      ' <button class="btn" data-unfocus>Снять выделение</button></div></div>' : "";
+    return;
+  }
   document.querySelectorAll("#cows tr").forEach(tr => tr.classList.toggle("on", tr.dataset.cow === selectedCow));
   let card = refreshOnly && box.dataset.cow === selectedCow ? JSON.parse(box.dataset.card || "null") : null;
   if (!refreshOnly || !card) {
@@ -956,7 +1113,18 @@ function cowCardHtml(row, card) {
     : '<p class="calm">' + (row.seen_min < 20 ? "Мало наблюдений — нужно хотя бы 20 минут." : "Всё как обычно в эти часы.") + "</p>";
   const line = (label, pct, norm) => pct == null ? "" :
     "<tr><td>" + label + '</td><td class="n">' + pct + '%</td><td class="n">' + (norm != null ? norm + "%" : "—") + "</td></tr>";
-  return '<div class="cols cowpage">' +
+  const [t0, t1] = sessionSpan(lastCows, lastNow);
+  const strip = row.timeline && row.timeline.length && lastFarm && lastFarm.as_of
+    ? '<div class="body">' + dayStrip(row, t0, t1) +
+      '<p class="note"><span class="swatches"><i class="sw k-lie"></i>лежит <i class="sw k-feed"></i>у корма ' +
+      '<i class="sw k-water"></i>у поилки <i class="sw k-stand"></i>стоит, пусто — не видна или не узнана. </span>' +
+      (row.usual ? "Ниже — её обычные часы по датчикам фермы за 13 суток: чем темнее, тем дольше в этот час." +
+        " Видно, где она ведёт себя не как обычно."
+        : "Обычных часов нет: у этой коровы не было датчиков, сравнение — со стадом.") + "</p></div>" : "";
+  return '<div class="panel focus-card"><h2 class="with-btn"><span>' + esc(row.cow) + " — лента за показ" +
+    (row.camera ? " · сейчас камера " + row.camera : "") + '</span><button class="btn" data-unfocus>Снять выделение</button></h2>' +
+    strip + "</div>" +
+    '<div class="cols cowpage">' +
     '<div class="panel"><h2>' + esc(row.cow) + " — что видит камера</h2><div class=\"body\">" +
     '<div class="head"><span class="id">' + esc(row.cow) + "</span><span class=\"tag\">" + esc(row.state || "") +
     (row.zone ? " · " + esc(row.zone) : "") + "</span></div>" + signs +
@@ -966,7 +1134,7 @@ function cowCardHtml(row, card) {
     '<p class="note">На виду ' + fmtDur(60 * row.seen_min) + (row.bout_min ? " · лежит без перерыва " + fmtDur(60 * row.bout_min) : "") +
     (row.longest_bout_min ? " · самый долгий период лёжа " + fmtDur(60 * row.longest_bout_min) : "") +
     ". «Обычно» — " + esc(row.norm_source) + ".</p>" +
-    (row.cow.match(/^C\d\d$/) ? '<a class="btn" href="#/cow/' + enc(row.cow) + "/" + (card ? card.as_of : "") + '">Сутки по датчикам</a>' : "") +
+    (row.norm_own ? '<a class="btn" href="#/cows/' + (card ? card.as_of : "") + "/" + enc(row.cow) + '">Сутки по датчикам</a>' : "") +
     "</div></div>" +
     '<div class="panel"><h2>Из реестра фермы' + (card ? " · на " + esc(fmtDay(card.as_of)) : "") + "</h2><div class=\"body\">" +
     registryHtml(card) + "</div></div></div>";
@@ -982,9 +1150,10 @@ async function updateLive() {
   const fromBrowser = s.source && s.source.kind === "browser";
   set("clip", !s.running ? "" : s.error ? (fromBrowser && !s.processed ? s.error : "Ошибка: " + s.error)
     : fromBrowser ? (camStream ? "кадры с камеры этого устройства" : "кадры присылает другое устройство")
-    : s.clip ? "ролик " + s.clip : "");
+    : (s.clip ? "ролик " + s.clip : "") + ((s.skipped || []).length ? " · пропущено " + s.skipped.join(", ") : ""));
   set("n-in", s.in_frame || 0);
   set("n-clock", s.clock || "—");
+  $("clock-row").hidden = !s.clock;
 
   const poses = s.lying != null;
   $("pose-box").hidden = !poses;
@@ -1004,10 +1173,13 @@ async function updateLive() {
   set("c-sharp", s.health ? s.health.sharpness : "—");
   const prob = $("c-problems");
   const bad = s.health && s.health.problems.length;
-  prob.className = "health " + (bad ? "bad" : s.running && s.health ? "good" : "");
-  prob.textContent = !s.running ? "камера выключена" : bad ? "Внимание: " + s.health.problems.join(", ")
+  prob.className = bad ? "lv-strong" : s.running && s.health ? "calm-text" : "";
+  prob.textContent = !s.running ? "выключена" : bad ? "внимание: " + s.health.problems.join(", ")
     : s.health ? "картинка в порядке" : "ждём кадр…";
+  if (bad) prob.closest("details").open = true;
 
+  updateAlerts(s);
+  updateRoll(s);
   updateCows(s);
 
   // Таблица дорожек зависит от того, узнаёт ли источник номера и различает ли позу.
@@ -1046,12 +1218,17 @@ function p1(v) { return v == null ? "—" : dec(100 * v, 1) + "%"; }
 function p0(v) { return v == null ? "—" : Math.round(100 * v) + "%"; }
 function verdict(text, good) { return '<p class="verdict ' + (good ? "good" : "bad") + '">' + esc(text) + "</p>"; }
 
+// Каждая проверка — раскрывающийся блок; вывод из первой строки уходит в сводку наверху.
+function qSection(title, body) {
+  const m = /<p class="verdict (good|bad)">([\s\S]*?)<\/p>/.exec(body);
+  const inner = body.replace(/^<div class="panel"><h2>[\s\S]*?<\/h2>/, "").replace(/<\/div>$/, "");
+  return { title, good: m ? m[1] === "good" : true, text: m ? m[2] : "",
+    html: '<details class="panel q"><summary><h2>' + title + "</h2></summary>" + inner + "</details>" };
+}
+
 async function pageQuality() {
-  const q = await api("/api/quality");
+  const [q, herd] = await Promise.all([api("/api/quality"), api("/api/herd").catch(() => null)]);
   const parts = [];
-  parts.push("<h1>Как проверено качество</h1>" +
-    '<p class="lead">Только реальные данные. Проверка всегда на коровах или днях, которых модель не видела. ' +
-    "Рядом — контрольные проверки: если необученная сеть почти так же хороша, цифре верить нельзя.</p>");
 
   const det = q.detector;
   if (det) {
@@ -1129,8 +1306,105 @@ async function pageQuality() {
       evs + "</tbody></table>" +
       '<p class="note">Диагнозов за время записи в журнале фермы нет, поэтому это проверка ложных тревог, а не выявления болезней.</p></div></div>');
   }
-  if (q.farm_chain) parts.splice(1, 0, farmChainPanel(q.farm_chain));
-  $app.innerHTML = parts.join("");
+  if (q.farm_chain) parts.unshift(farmChainPanel(q.farm_chain));
+  if (q.improvements) parts.splice(1, 0, improvementsPanel(q.improvements));
+  if (q.inrae && q.inrae["всего"]) parts.push(inraePanel(q.inrae));
+  if (herd && herd.indicators) parts.push(catalogPanel(herd.indicators));
+  const sections = parts.filter(Boolean).map(p => qSection(/<h2>([\s\S]*?)<\/h2>/.exec(p)[1], p));
+  $app.innerHTML =
+    '<div class="pagehead"><h1>Как проверено</h1></div>' +
+    '<p class="lead">Только реальные данные. Проверка — на коровах или днях, которых модель не видела, ' +
+    "и рядом контроль: если необученная сеть почти так же хороша, цифре верить нельзя.</p>" +
+    '<div class="panel"><table class="t qsum"><thead><tr><th>что проверено</th><th>вывод</th><th></th></tr></thead><tbody>' +
+    sections.map((s, i) => '<tr class="click" data-i="' + i + '"><td><b>' + (s.title.split(" (")[0]) + "</b></td>" +
+      "<td" + (s.good ? "" : ' class="warn-text"') + ">" + s.text + '</td><td class="n muted">подробно ▸</td></tr>').join("") +
+    "</tbody></table></div>" +
+    sections.map(s => s.html).join("");
+  const blocks = [...document.querySelectorAll("details.q")];
+  document.querySelectorAll(".qsum tr[data-i]").forEach(tr => tr.onclick = () => {
+    const d = blocks[+tr.dataset.i];
+    d.open = true;
+    d.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
+// Детектор отклонений на настоящих болезнях (INRAE, 4 фермы Франции).
+function inraePanel(r) {
+  const a = r["всего"]["как было"], b = r["всего"]["после"];
+  const names = Object.keys(b["болезни"]);
+  const rows = names.map(n => {
+    const x = b["болезни"][n], y = (a["болезни"] || {})[n] || {};
+    const better = x["поймано"] > x["случайно ожидалось"];
+    const was = y["эпизодов"] ? y["поймано"] + " из " + y["эпизодов"] + " · наугад " + dec(y["случайно ожидалось"], 0) : "—";
+    return qrow([esc(n), was,
+      x["поймано"] + " из " + x["эпизодов"] + " · наугад " + dec(x["случайно ожидалось"], 0),
+      better ? '<span class="calm-text">лучше случайного</span>' : '<span class="warn-text">не лучше случайного</span>']);
+  }).join("");
+  const oe = b["охота"];
+  const good = names.filter(n => b["болезни"][n]["поймано"] > b["болезни"][n]["случайно ожидалось"]);
+  const times = n => { const x = b["болезни"][n]; return x ? dec(x["поймано"] / Math.max(1e-9, x["случайно ожидалось"]), 1) : "—"; };
+  return '<div class="panel"><h2>Отклонения на настоящих болезнях (INRAE, Франция: 4 фермы, 386 коров)</h2><div class="body">' +
+    verdict("Ловит половину хромоты и мастита — в " + times("хромота") + " и " + times("мастит") +
+      " раза лучше случайного; ацидоз и вызванное воспаление — нет. Ложных «проверить» — " +
+      dec(b["ложные «проверить» на 100 коров в месяц"], 0) + " на 100 коров в месяц (было " +
+      dec(a["ложные «проверить» на 100 коров в месяц"], 0) + ").", false) +
+    "<p>Данные — система положения коров в коровнике (не камера), но признаки те же: сколько ест, лежит, " +
+    "сколько в проходах. В журнале фермы — хромота, мастит, ацидоз, болезни, охота. «Поймал» — «проверить» или " +
+    "«на заметку» за 3 суток до отметки в журнале … 2 суток после. Подбор — ферма 4 до июля 2015, проверка — " +
+    "остальное, один раз.</p>" +
+    '<table class="t"><thead><tr><th>эпизоды</th><th class="n">как было: поймано · наугад</th>' +
+    '<th class="n">после правки: поймано · наугад</th><th></th></tr></thead><tbody>' + rows +
+    (oe ? qrow(["охота («признаки охоты» ±1 сут)", (a["охота"] || {})["поймано"] + " из " + (a["охота"] || {})["эпизодов"],
+      oe["поймано"] + " из " + oe["эпизодов"] + " (" + p0(oe["поймано"] / oe["эпизодов"]) + ")", ""]) : "") +
+    qrow(["ложных «проверить» на 100 коров в месяц", dec(a["ложные «проверить» на 100 коров в месяц"], 0),
+      dec(b["ложные «проверить» на 100 коров в месяц"], 0), ""]) +
+    qrow(["все отметки в спокойные сутки, на 100 коров в месяц", dec(a["ложные на 100 коров в месяц"], 0),
+      dec(b["ложные на 100 коров в месяц"], 0), ""]) +
+    '</tbody></table><p class="note">Правки 29.10: если отклонение держится 5 суток, это новая норма коровы ' +
+    "(рацион, стадия лактации, группа) — без этого норма замерзала, и корова висела в «проверить» до 388 суток; " +
+    "порог накопления тревоги 5 вместо 2,5 — ложных «проверить» вдвое-втрое меньше при той же поимке. " +
+    "Признаки по часам суток пробовали — на части подбора хуже (отметок в 3–4 раза больше), не взяты. " +
+    "Проверочная часть смотрелась дважды (для промежуточной версии и для этой). " +
+    "Лучше случайного: " + esc(good.join(", ") || "—") + ". Почему не видны ацидоз и воспаление — пока " +
+    "предположение: они сильнее меняют жвачку и поведение в течение нескольких часов, чем суточное время у корма.</p></div></div>";
+}
+
+// Что система считает, а что нет — честное состояние каждого признака.
+function catalogPanel(indicators) {
+  const works = indicators.filter(i => i.status === "работает").length;
+  const not = indicators.filter(i => i.status !== "работает" && i.status !== "косвенно").map(i => lower(i.name));
+  const rows = indicators.map(i =>
+    "<tr" + (i.status === "работает" ? "" : ' class="dim"') + "><td><b>" + esc(i.name) + "</b></td>" +
+    "<td>" + esc(i.what) + "</td><td>" + esc(i.source) + "</td><td>" +
+    badge(i.status === "работает" ? "ok" : i.status === "косвенно" ? "watch" : "none", i.status) + "</td>" +
+    "<td>" + esc(i.look_at) + "</td></tr>").join("");
+  return '<div class="panel"><h2>Что система считает, а что нет</h2><div class="body">' +
+    verdict("Считает признаков: " + works + "; не сделано: " + (not.join(", ") || "—") + ".", !not.length) +
+    '<table class="t"><thead><tr><th>признак</th><th>как считается</th><th>откуда</th><th>состояние</th>' +
+    "<th>что осмотреть при отклонении</th></tr></thead><tbody>" + rows + "</tbody></table></div></div>";
+}
+
+// Улучшения 29.10: один номер — одна рамка, галерея с позой, детектор покрупнее.
+function improvementsPanel(im) {
+  const t = im["14–24 ч"] || {};
+  const a = t["как было (17.09)"], b = t["после улучшений"];
+  if (!a || !b) return "";
+  const row = (name, k, fmt) => qrow([name, fmt(a[k]), fmt(b[k])]);
+  const det = im["детектор на 14–24 ч"];
+  return '<div class="panel"><h2>Улучшения номера и детектора (MmCows, 29.10)</h2><div class="body">' +
+    verdict("Чужих номеров на треть меньше: " + p1(a["ошибка"]) + " → " + p1(b["ошибка"]) +
+      "; верных столько же (" + p0(b["верно"]) + ").", true) +
+    "<p>Один номер — одна рамка в камере, лежащая корова сравнивается с «лежачими» портретами, детектор YOLO26s. " +
+    "Всё выбрано на 12–14 ч, проверено один раз на 14–24 ч. Узнавание, обученное поровну стоя и лёжа, на 12–14 ч " +
+    "оказалось хуже — не взято.</p>" +
+    '<table class="t"><thead><tr><th>14–24 ч</th><th class="n">как было (17.09)</th><th class="n">после</th></tr></thead><tbody>' +
+    row("номер верный", "верно", p1) + row("номер чужой (ошибка)", "ошибка", p1) + row("«не знаю»", "не знаю", p1) +
+    row("подмен номера", "подмен", v => v) + row("IDF1 номера", "IDF1", p1) + row("лежащих верно", "лежит верно", p1) +
+    (det ? qrow(["детектор: найдено коров", p1(det.YOLO26n.recall), p1(det.YOLO26s.recall)]) +
+      qrow(["детектор: точность", p1(det.YOLO26n.precision), p1(det.YOLO26s.precision)]) : "") +
+    '</tbody></table><p class="note">Часть ошибок стала честным «не знаю»; IDF1 считает его пропуском, поэтому он чуть ниже. ' +
+    "Для фермы так лучше: чужой номер портит карточку другой коровы, «не знаю» — нет. Лежащие коровы остаются слабым местом.</p>" +
+    "</div></div>";
 }
 
 // Вся цепочка ТЗ на ферме MmCows: узнавание → tracking → активность, с ответами.
@@ -1182,5 +1456,4 @@ function farmChainPanel(fc) {
     "</div></div>";
 }
 
-barInfo();
 route();

@@ -18,7 +18,11 @@ video:
   frame_stride: 1
   fallback_fps: 1.0
 detector:
-  model: models/detector_mmcows/cow_lying.pt
+  # YOLO26s (29.10): на 14–24 ч найдено 93,2% коров против 92,4% у YOLO26n,
+  # лишних рамок на 12% меньше, по скорости то же. Выбран по 12–14 ч.
+  model: models/detector_mmcows/cow_lying_s.pt
+  # Нет файла (архив данных до 29.10) — прежний YOLO26n.
+  fallback_model: models/detector_mmcows/cow_lying.pt
   class_ids: []
   conf: 0.35
   iou: 0.5
@@ -41,6 +45,12 @@ gallery:
   unknown_distance: 0.7
   max_per_cow: 300
   vote_window: 8
+  # Один номер — одна рамка в камере и галерея с позой: на 12–14 ч ошибок
+  # номера 9,6% → 6,1%, верных 88,0% → 88,8%. Доля голосов ⅓ — там же.
+  one_box_per_cow: true
+  vote_ratio: 0.34
+  # Нет файла (архив данных до 29.10) — обычная галерея.
+  pose_gallery: var/gallery_mmcows_pose.npz
 tag_ocr:
   kind: none
 storage:

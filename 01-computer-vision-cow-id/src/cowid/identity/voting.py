@@ -9,6 +9,9 @@
 
 Запуск (после `cowid train-reid` и `cowid eval-reid`):
     cowid voting-effect
+
+Здесь же `assign_unique` — раздача номеров всем дорожкам кадра сразу, чтобы
+одна корова не стояла в двух местах одной камеры.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from __future__ import annotations
 import collections
 import json
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
@@ -87,3 +91,43 @@ def measure(model_dir: Path, vote_ratio: float = 0.5) -> dict:
     (model_dir / "voting_effect.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
+
+
+# --------------------------------------------------------------------------
+# Один номер — одна рамка
+# --------------------------------------------------------------------------
+
+def assign_unique(tallies: list[dict], totals: list[float], min_votes: float = 3,
+                  min_share: float = 0.5) -> list[Optional[str]]:
+    """Номера дорожек одной камеры в одном кадре: каждая корова — не больше одной рамки.
+
+    Без этого правила каждая дорожка решает сама, и одна корова то и дело
+    оказывается в двух местах одной камеры (на MmCows — в 44% кадров, половина
+    ошибок номера). Здесь номера раздаются сразу всем дорожкам кадра: сумма
+    долей голосов максимальна, корова достаётся одной дорожке, проигравшая
+    получает свой следующий номер, если за него хватает голосов, иначе «?».
+
+    `tallies[i]` — голоса дорожки по коровам (вес), `totals[i]` — все её голоса,
+    включая «не знаю». Номер возможен, если за него не меньше `min_votes`
+    голосов (или все голоса короткой дорожки) и не меньше `min_share` от всех.
+    """
+    from scipy.optimize import linear_sum_assignment
+
+    n = len(tallies)
+    cows = sorted({c for t in tallies for c in t if c is not None})
+    if not n or not cows:
+        return [None] * n
+    # Столбцы: коровы, затем по «пустому» месту на каждую дорожку (номер не дан).
+    cost = np.zeros((n, len(cows) + n))
+    cost[:, :len(cows)] = 1e6
+    for i, (tally, total) in enumerate(zip(tallies, totals)):
+        for j, cow in enumerate(cows):
+            votes = tally.get(cow, 0.0)
+            if total > 0 and votes >= min(min_votes, total) and votes / total >= min_share:
+                cost[i, j] = -votes / total
+    rows, cols = linear_sum_assignment(cost)
+    out: list[Optional[str]] = [None] * n
+    for i, j in zip(rows, cols):
+        if j < len(cows) and cost[i, j] < 0:
+            out[i] = cows[j]
+    return out

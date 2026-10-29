@@ -216,17 +216,17 @@ def evaluate(model_path: str, classes, imgsz: int, conf: float, device: str,
 
 
 def train(base: str, epochs: int, imgsz: int, batch: int, device: str,
-          out: Path = PREPARED, log: Log = print) -> Path:
+          out: Path = PREPARED, log: Log = print,
+          target: Path = Path("models/detector_mmcows/cow_lying.pt"), run: str = "mmcows_det") -> Path:
     from ultralytics import YOLO
 
     model = YOLO(str(Path("models/pretrained") / base))
     runs = Path("reports/detector_runs").resolve()
     model.train(data=str(out / "data.yaml"), epochs=epochs, imgsz=imgsz, batch=batch,
-                workers=4, device=device, project=str(runs), name="mmcows_det",
+                workers=4, device=device, project=str(runs), name=run,
                 exist_ok=True, seed=42, plots=True, verbose=False)
-    target = Path("models/detector_mmcows/cow_lying.pt")
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(runs / "mmcows_det" / "weights" / "best.pt", target)
+    shutil.copy2(runs / run / "weights" / "best.pt", target)
     log(f"Веса: {target}")
     return target
 

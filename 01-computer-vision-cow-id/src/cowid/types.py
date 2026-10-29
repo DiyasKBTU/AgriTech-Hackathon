@@ -181,6 +181,10 @@ class ActivityFeatures:
     #: Суточный удой из доильной установки или ERP. Камера его не меряет;
     #: если данных нет — None, и признак просто не оценивается.
     milk_kg: Optional[float] = None
+    #: Разбивка по часам суток, если источник её даёт: {"feeder", "resting",
+    #: "observed"} → 24 числа секунд. Тогда детектор сравнивает ещё и *когда*
+    #: корова ест и лежит, а не только сколько за сутки (`anomaly.baseline.BLOCKS`).
+    hours: Optional[dict] = None
 
     def as_dict(self) -> dict:
         return {

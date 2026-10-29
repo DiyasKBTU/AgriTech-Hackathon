@@ -182,6 +182,171 @@ def load_hourly_norms(path: Path = HOURLY_NORMS) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+EXTREMES = Path("var/mmcows_extremes.json")
+#: Окна суток для пределов: ночью и утром корова лежит дольше, чем днём.
+EXTREME_WINDOWS = ((0, 14), (14, 24))
+#: «Подход к корму» по радиометке: минута, где корова больше половины времени
+#: в зоне стола, и таких минут не меньше двух за пять минут.
+VISIT_MINUTES = 2
+#: Пределы — без 25.07: в этот день снято видео показа, и предел не должен
+#: знать сам проверяемый день.
+EXTREME_DAYS = [d for d in FULL_DAYS if d != "0725"]
+
+
+def _local_hours(ts: float) -> float:
+    return ((ts - 5 * 3600) % 86400) / 3600
+
+
+#: Предупреждаем, только если на четверть дольше её прежнего рекорда. Проверено
+#: на датчиках (10 коров × 13 суток, каждые сутки против остальных): без запаса
+#: правило срабатывает в 8% здоровых коров-суток (2–3 ложных в день на 16 голов),
+#: с запасом ×1,25 — в 1%: C08 31.07 (день проверки стельности) и C10 30.07 (после жары).
+LIMIT_MARGIN = 1.25
+#: Сколько прошлых суток нужно, чтобы у коровы был свой рекорд (как норма — 5 суток).
+MIN_HISTORY = 5
+
+
+def _local_s(ts: float) -> int:
+    return int((ts - 5 * 3600) % 86400)
+
+
+def day_profile(cow: int, day: str, root: Path = ROOT) -> Optional[dict]:
+    """Сутки коровы по датчикам: лента по минутам и самые долгие перерыв в еде
+    и лежание подряд в каждом окне суток — с началом и концом (секунды суток).
+
+    Лента: лежит (нога) → у корма / у поилки (радиометка, большинство минуты) → стоит.
+    Перерыв в еде — между «подходами к корму» (не меньше двух минут у стола за пять).
+    """
+    name = cow_name(cow)
+    try:
+        pts = _uwb(cow, day, root)
+        ankle = _read_csv(root / "main_data" / "ankle" / name / f"{name}_{day}.csv")
+    except FileNotFoundError:
+        return None
+    zones = defaultdict(list)
+    for ts, x, y in pts:
+        zones[_local_s(ts) // 60].append(zone_of(x, y))
+    lying = {}
+    for r in ankle:
+        ts, v = _num(r["timestamp"]), _num(r["lying"])
+        if ts is not None and v is not None:
+            lying[_local_s(ts) // 60] = v >= 0.5
+    fed = {m for m, v in zones.items() if np.mean([z == "feeder" for z in v]) >= 0.5}
+    visits = sorted(m for m in zones if sum((m - k) in fed for k in range(5)) >= VISIT_MINUTES)
+
+    kinds = {}
+    for m in sorted(set(zones) | set(lying)):
+        if lying.get(m):
+            kinds[m] = "лежит"
+        elif m in zones:
+            top = max(set(zones[m]), key=zones[m].count)
+            kinds[m] = {"feeder": "у корма", "drinker": "у поилки"}.get(top, "стоит")
+    runs: list = []
+    for m in sorted(kinds):
+        if runs and runs[-1][2] == kinds[m] and runs[-1][1] == m * 60:
+            runs[-1][1] = (m + 1) * 60
+        else:
+            runs.append([m * 60, (m + 1) * 60, kinds[m]])
+
+    windows = {}
+    for a, b in EXTREME_WINDOWS:
+        inside = [m for m in sorted(zones) if a * 60 <= m < b * 60]
+        feed = None
+        if len(inside) > 60 * (b - a) * 0.8:            # окно записано почти целиком
+            marks = [inside[0]] + [m for m in visits if a * 60 <= m < b * 60] + [inside[-1]]
+            x, y = max(zip(marks, marks[1:]), key=lambda p: p[1] - p[0])
+            feed = [round((y - x) / 60, 2), x * 60, y * 60]
+        best, start, cur, cur_start = 0, None, 0, None
+        for m in range(a * 60, b * 60):
+            if lying.get(m):
+                cur_start = m if cur == 0 else cur_start
+                cur += 1
+                if cur > best:
+                    best, start = cur, cur_start
+            else:
+                cur = 0
+        bout = [round(best / 60, 2), start * 60, (start + best) * 60] if best else [0.0, None, None]
+        windows[f"{a}-{b}"] = {"feed_gap": feed, "lying_bout": bout}
+    return {"runs": runs, "windows": windows}
+
+
+DAY_PROFILES = Path("var/mmcows_day_profiles.json")
+
+
+def load_day_profiles(path: Path = DAY_PROFILES, root: Path = ROOT) -> dict:
+    """{корова: {"ГГГГ-ММ-ДД": сутки}} — из файла; нет файла — по датчикам, если они есть."""
+    if not path.exists():
+        if not (root / "main_data").exists():
+            return {}
+        out: dict = {}
+        for cow in SENSOR_COWS:
+            for day in FULL_DAYS:
+                p = day_profile(cow, day, root)
+                if p:
+                    out.setdefault(cow_name(cow), {})[_day(day).isoformat()] = p
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def sensor_alerts(profiles: dict) -> list[dict]:
+    """Явные предупреждения по суткам: перерыв в еде или лежание подряд на
+    четверть дольше прежнего рекорда этой коровы в то же окно суток.
+
+    Рекорд — только по прошлым суткам (не меньше `MIN_HISTORY`), как норма
+    детектора отклонений: в первые сутки записи предупреждений нет.
+    """
+    out = []
+    for cow, days in profiles.items():
+        order = sorted(days)
+        for i, day in enumerate(order):
+            for window in (f"{a}-{b}" for a, b in EXTREME_WINDOWS):
+                for kind in ("feed_gap", "lying_bout"):
+                    cur = days[day]["windows"][window][kind]
+                    past = [days[d]["windows"][window][kind][0] for d in order[:i]
+                            if days[d]["windows"][window][kind]]
+                    if cur is None or len(past) < MIN_HISTORY or not cur[0]:
+                        continue
+                    record = max(past)
+                    if cur[0] > record * LIMIT_MARGIN:
+                        out.append({"cow": cow, "day": day, "window": window, "kind": kind,
+                                    "hours": cur[0], "start": cur[1], "end": cur[2],
+                                    "record_h": record, "history_days": len(past)})
+    return sorted(out, key=lambda a: (a["day"], a["cow"]))
+
+
+def usual_extremes(root: Path = ROOT, days: list[str] = EXTREME_DAYS) -> dict:
+    """Самый долгий перерыв в еде и самое долгое лежание подряд у каждой коровы
+    за каждые сутки записи, отдельно по окнам суток (часы).
+
+    Это опора для явных предупреждений: «не подходила к корму 4 ч 10 мин —
+    у неё за 12 суток самое долгое 3 ч 54 мин». Перерыв включает дойку, как в жизни.
+    """
+    out: dict = {}
+    for cow in SENSOR_COWS:
+        per = {f"{a}-{b}": {"feed_gap_h": [], "lying_bout_h": []} for a, b in EXTREME_WINDOWS}
+        for day in days:
+            p = day_profile(cow, day, root)
+            if p is None:
+                continue
+            for key, w in p["windows"].items():
+                if w["feed_gap"]:
+                    per[key]["feed_gap_h"].append(w["feed_gap"][0])
+                per[key]["lying_bout_h"].append(w["lying_bout"][0])
+        out[cow_name(cow)] = per
+    return out
+
+
+def load_usual_extremes(path: Path = EXTREMES) -> dict:
+    """Пределы из файла; нет файла — считаются по датчикам, если они скачаны."""
+    if not path.exists():
+        if not (ROOT / "main_data").exists():
+            return {}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(usual_extremes(), ensure_ascii=False), encoding="utf-8")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def load_all(root: Path = ROOT, log: Log = print) -> list[ActivityFeatures]:
     out = []
     for cow in SENSOR_COWS:

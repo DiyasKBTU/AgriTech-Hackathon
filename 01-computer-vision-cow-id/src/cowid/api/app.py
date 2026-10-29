@@ -42,6 +42,11 @@ class LiveStartIn(BaseModel):
     view: Optional[str] = None
 
 
+class FocusIn(BaseModel):
+    #: Номер коровы, которую подсветить на кадре; пусто — снять подсветку.
+    cow: Optional[str] = None
+
+
 def lan_addresses() -> list[str]:
     """Адреса компьютера в локальной сети — их набирают на телефоне."""
     import socket
@@ -171,6 +176,38 @@ def create_app(cfg: PipelineConfig) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Нет данных по корове {cow_id}")
         return detail
 
+    # -- явные предупреждения по датчикам (MmCows) -------------------------
+
+    def _profiles() -> dict:
+        from ..mmcows import load_day_profiles
+
+        return load_day_profiles() if cfg.farm.registry == "mmcows" else {}
+
+    @app.get("/api/sensor-alerts")
+    def sensor_alerts_api(day: Optional[str] = None) -> dict:
+        """«Не подходила к корму 3 ч 55 мин — прежний рекорд 3 ч 07 мин» за сутки (или за все)."""
+        from ..mmcows import LIMIT_MARGIN, MIN_HISTORY, sensor_alerts
+
+        alerts = sensor_alerts(_profiles())
+        return {"alerts": [a for a in alerts if not day or a["day"] == day],
+                "margin": LIMIT_MARGIN, "min_history": MIN_HISTORY}
+
+    @app.get("/api/sensor-strips/{cow_id}")
+    def sensor_strips(cow_id: str, day: Optional[str] = None, back: int = 6) -> dict:
+        """Лента суток коровы по датчикам: выбранные сутки и `back` прошлых, с предупреждениями."""
+        from ..mmcows import sensor_alerts
+
+        profiles = _profiles().get(cow_id) or {}
+        days = sorted(profiles)
+        if not days:
+            raise HTTPException(status_code=404, detail="Лент по датчикам для этой коровы нет")
+        day = day if day in profiles else days[-1]
+        i = days.index(day)
+        shown = days[max(0, i - max(0, min(back, 13))): i + 1]
+        alerts = [a for a in sensor_alerts({cow_id: profiles}) if a["day"] in shown]
+        return {"cow": cow_id, "day": day, "alerts": alerts,
+                "days": [{"day": d, "runs": profiles[d]["runs"]} for d in shown]}
+
     @app.get("/api/registry/{cow_id}")
     def registry_card(cow_id: str, day: Optional[date] = None) -> dict:
         """Карточка коровы из реестра фермы на дату (для живого показа — на день съёмки)."""
@@ -208,6 +245,9 @@ def create_app(cfg: PipelineConfig) -> FastAPI:
             "sensor_check": _read_json(Path("reports/mmcows/detector_on_sensors.json")),
             "lying_check": _read_json(Path("reports/mmcows/lying_check.json")),
             "farm_chain": _read_json(Path("reports/mmcows/chain.json")),
+            "improvements": _read_json(Path("reports/mmcows/improvements.json")),
+            "alerts_check": _read_json(Path("reports/mmcows/alerts_check.json")),
+            "inrae": _read_json(Path("reports/inrae/health_check.json")),
         }
 
     # -- живой просмотр ----------------------------------------------------
@@ -242,6 +282,14 @@ def create_app(cfg: PipelineConfig) -> FastAPI:
         from ..live import ENGINE
 
         return ENGINE.state()
+
+    @app.post("/api/live/focus")
+    def live_focus(body: FocusIn) -> dict:
+        """«Найти корову»: на кадре подсвечена она и её путь, остальные притушены."""
+        from ..live import ENGINE
+
+        ENGINE.focus = (body.cow or "").strip()[:32] or None
+        return {"focus": ENGINE.focus}
 
     @app.post("/api/live/frame", include_in_schema=False)
     async def live_frame(request: Request) -> dict:

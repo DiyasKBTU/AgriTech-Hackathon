@@ -67,6 +67,15 @@ def mad_sigma(values: np.ndarray) -> tuple[float, float]:
 
 #: Производные показатели. Все нормированы на время наблюдения.
 METRICS = ("feeder_share", "drinker_share", "resting_share", "activity_rate", "milk_kg")
+#: Часы суток для признаков «когда»: ночь, утро, день, вечер. Сколько корова
+#: ест и лежит в эти часы — против её же нормы для этих часов. Есть, только
+#: если источник даёт разбивку по часам (`ActivityFeatures.hours`). Проверено
+#: на INRAE (29.10, часть подбора): за 6 часов поведение гуляет сильнее, чем за
+#: сутки, — отметок в 3–4 раза больше при той же поимке. Сейчас ни один
+#: источник платформы часы не передаёт; `cowid inrae-check` их не включает.
+BLOCKS = ((0, 6), (6, 12), (12, 18), (18, 24))
+BLOCK_METRICS = tuple(f"{m}_{a:02d}_{b:02d}" for m in ("feeder_share", "resting_share") for a, b in BLOCKS)
+ALL_METRICS = METRICS + BLOCK_METRICS
 
 #: В какую сторону показатель сдвигается у нездорового животного.
 ILLNESS_DIRECTION = {
@@ -75,6 +84,7 @@ ILLNESS_DIRECTION = {
     "resting_share": +1,     # больше лежит
     "activity_rate": -1,     # меньше ходит
     "milk_kg": -1,           # меньше молока
+    **{m: (-1 if m.startswith("feeder") else +1) for m in BLOCK_METRICS},
 }
 
 #: В какую сторону — у животного в охоте.
@@ -104,6 +114,13 @@ METRIC_MEANING = {
     ("activity_rate", "up"): "двигается намного больше — признак охоты или беспокойства",
     ("milk_kg", "down"): "удой ниже обычного — осмотреть вымя, проверить аппетит и рацион",
 }
+for _m in BLOCK_METRICS:
+    _base, _a, _b = _m.rsplit("_", 2)
+    METRIC_LABELS[_m] = f"{METRIC_LABELS[_base]} в {_a}–{_b} ч"
+    for _side in ("down", "up"):
+        if (_base, _side) in METRIC_MEANING:
+            METRIC_MEANING[(_m, _side)] = METRIC_MEANING[(_base, _side)].replace(
+                " — ", f" в {_a}–{_b} ч — ", 1)
 
 
 # --------------------------------------------------------------------------
@@ -114,13 +131,21 @@ def derived_metrics(f: ActivityFeatures) -> dict[str, float]:
     """Переводит суточные показатели в доли от времени наблюдения."""
     observed = max(f.observed_seconds, 1e-6)
     hours = observed / 3600.0
-    return {
+    out = {
         "feeder_share": f.feeder_seconds / observed,
         "drinker_share": f.drinker_seconds / observed,
         "resting_share": f.resting_seconds / observed,
         "activity_rate": f.distance_m / hours if hours > 0 else 0.0,
         "milk_kg": f.milk_kg,
     }
+    if f.hours:
+        for a, b in BLOCKS:
+            seen = sum(f.hours["observed"][a:b])
+            # Часы суток, где корову почти не видели, не оцениваются.
+            if seen >= 0.8 * (b - a) * 3600:
+                out[f"feeder_share_{a:02d}_{b:02d}"] = sum(f.hours["feeder"][a:b]) / seen
+                out[f"resting_share_{a:02d}_{b:02d}"] = sum(f.hours["resting"][a:b]) / seen
+    return out
 
 
 def format_metric(metric: str, value: float) -> str:
@@ -156,6 +181,9 @@ class CowState:
     cusum: float = 0.0
     #: Сколько суток подряд длится текущий эпизод.
     episode_days: int = 0
+    #: Сутки текущего эпизода, не взятые в норму, — на случай, если отклонение
+    #: окажется её новой нормой (см. `BaselineConfig.max_episode_days`).
+    held: list[tuple[date, dict[str, float]]] = field(default_factory=list)
 
 
 @dataclass
@@ -241,7 +269,7 @@ class PersonalBaseline:
 
     def _deviations(self, cow_id: str, metrics: dict[str, float]) -> list[Deviation]:
         out: list[Deviation] = []
-        for metric in METRICS:
+        for metric in ALL_METRICS:
             value = metrics.get(metric)
             if value is None:
                 continue
@@ -342,6 +370,20 @@ class PersonalBaseline:
         # в норму идёт — это и есть обычная жизнь животного.
         if status not in ("alert", "estrus") and not developing:
             state.history.append((f.day, metrics))
+            state.held = []
+        else:
+            state.held.append((f.day, metrics))
+            # Отклонение держится дольше max_episode_days — это её новая норма
+            # (другая стадия лактации, рацион, группа), а не болезнь. Без этого
+            # норма замерзает, и корова неделями висит в «проверить»: на данных
+            # INRAE (месяцы записи) — до 388 суток подряд. О начале изменения
+            # зоотехник уже предупреждён.
+            limit = self.cfg.max_episode_days
+            if limit and len(state.held) >= limit:
+                state.history.extend(state.held)
+                state.held = []
+                state.cusum = 0.0
+                state.episode_days = 0
 
         return DayAssessment(
             cow_id=f.cow_id, day=f.day, status=status,
@@ -356,7 +398,7 @@ class PersonalBaseline:
         events: list[Event] = []
         # Разброс стада фиксируется на начало суток: оценки одного дня не должны
         # зависеть от того, в каком порядке обработаны животные.
-        self._spread_cache = {m: self.herd_relative_spread(m) for m in METRICS}
+        self._spread_cache = {m: self.herd_relative_spread(m) for m in ALL_METRICS}
         # Поправка — только на заметный сдвиг всего стада. Мелкий сдвиг медианы
         # бывает и от нескольких больных коров; поправлять на него нельзя,
         # иначе детектор теряет чувствительность к ним же.
@@ -388,7 +430,7 @@ class PersonalBaseline:
             if f.observed_seconds < self.cfg.min_observed_seconds:
                 continue
             metrics = derived_metrics(f)
-            for metric in METRICS:
+            for metric in ALL_METRICS:
                 value = metrics.get(metric)
                 if value is None:
                     continue

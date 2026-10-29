@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
 import numpy as np
@@ -107,4 +108,6 @@ class YoloDetector:
 
 
 def build_detector(cfg: DetectorConfig) -> Detector:
+    if cfg.fallback_model and not Path(cfg.model).exists():
+        cfg = cfg.model_copy(update={"model": cfg.fallback_model})
     return YoloDetector(cfg)

@@ -81,8 +81,9 @@ def track_label(row: dict, compact: bool = False) -> str:
     if not row.get("registered", True):
         return row["state"]
     if compact:
-        # Много коров в кадре: только номер и поза, иначе подписи сливаются.
-        return f"{row['cow'] or '?'} {row['state']}"
+        # Много коров в кадре: только номер. Поза видна по цвету рамки
+        # (синяя — лежит), иначе подписи не помещаются между соседями.
+        return row["cow"] or "?"
     who = f"№ {row['cow']}" if row.get("cow") else "?"
     return f"{who}  {row['votes']}/{row['total']}  {row['state']}"
 
@@ -93,34 +94,147 @@ def duration(seconds: float) -> str:
     return f"{seconds:.0f} с"
 
 
-def draw_tracks(frame: np.ndarray, rows: list[dict], scale: float = 1.0) -> np.ndarray:
+#: Выбранная корова («найти корову») — янтарная рамка и путь, остальной кадр притушен.
+FOCUS = (0, 176, 240)
+DIM = 0.42
+
+
+def _outline(r: dict) -> np.ndarray:
+    if r.get("corners"):
+        return np.asarray(r["corners"], dtype=np.float32).reshape(-1, 2)
+    x1, y1, x2, y2 = r["bbox"]
+    return np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
+
+
+def _place(box: tuple[int, int, int, int], w: int, h: int, size: tuple[int, int],
+           taken: list[tuple[int, int, int, int]]) -> Optional[tuple[int, int]]:
+    """Левый верхний угол подписи: над рамкой, внутри сверху, под рамкой — где не
+    занято подписями соседей. Нигде нет места — подписи не будет (рамка останется)."""
+    x0, y0, x1, y1 = box
+    W, H = size
+    for x, y in ((x0, y0 - h), (x0, y0 + 2), (x0, y1), (x1 - w, y0 - h), (x0, y1 - h - 2),
+                 (x1 - w, y1)):
+        x = min(max(0, x), W - w)
+        y = min(max(0, y), H - h)
+        if all(x + w <= a or a2 <= x or y + h <= b or b2 <= y for a, b, a2, b2 in taken):
+            return x, y
+    return None
+
+
+def draw_tracks(frame: np.ndarray, rows: list[dict], scale: float = 1.0,
+                focus: Optional[dict] = None, alerted: frozenset = frozenset()) -> np.ndarray:
     """Рамки и подписи. `scale` — во сколько раз кадр уменьшен при показе,
-    чтобы толщина линий и размер текста остались читаемыми."""
+    чтобы толщина линий и размер текста остались читаемыми.
+
+    `focus` — выбранная корова: {"cow", "trail": [(x, y), ...], "note"}. Её рамка
+    и путь — янтарные, остальной кадр притушен, чужие рамки тонкие и без подписей.
+    `alerted` — коровы с явным предупреждением («не ела 4 ч»): красная рамка и «!».
+    """
     out = frame.copy()
     thick = max(2, int(3 / scale))
-    size = max(14, int((20 if len(rows) <= 12 else 14) / scale))
+    compact = len(rows) > 12
+    size = max(14, int((20 if not compact else 15) / scale))
+    pad = max(3, int(4 / scale))
+    target = focus.get("cow") if focus else None
+    picked = focus.get("tracks") if focus else None
+
+    def is_chosen(r: dict) -> bool:
+        if not target or r.get("cow") != target:
+            return False
+        return picked is None or r.get("track") in picked
+
+    mine = [r for r in rows if is_chosen(r)]
+    if focus:
+        light = out.copy()
+        out = (out * DIM).astype(np.uint8)
+        for r in mine:
+            x, y, w, h = cv2.boundingRect(_outline(r).astype(np.int32))
+            m = int(h * 0.15)
+            out[max(0, y - m):y + h + m, max(0, x - m):x + w + m] = \
+                light[max(0, y - m):y + h + m, max(0, x - m):x + w + m]
+
+    # Подписи — по важности: выбранная, с предупреждением, узнанные, «не знаю».
+    order = sorted(rows, key=lambda r: (not is_chosen(r), r.get("cow") not in alerted, not r.get("cow")))
+    taken: list[tuple[int, int, int, int]] = []
     labels = []
-    for r in rows:
-        if r.get("state") == "лежит":
+    for r in order:
+        pts = _outline(r)
+        chosen = is_chosen(r)
+        warn = bool(r.get("cow")) and r["cow"] in alerted
+        if warn:
+            color = ALERT
+        elif r.get("state") == "лежит":
             color = LYING
         else:
             color = KNOWN if r.get("cow") else UNKNOWN
-        if r.get("corners"):
-            pts = np.asarray(r["corners"], dtype=np.int32)
-            cv2.polylines(out, [pts], True, color, thick)
-            x, y = int(pts[:, 0].min()), int(pts[:, 1].min())
-        else:
-            x1, y1, x2, y2 = (int(v) for v in r["bbox"])
-            cv2.rectangle(out, (x1, y1), (x2, y2), color, thick)
-            x, y = x1, y1
-        text = track_label(r, compact=len(rows) > 12)
-        w = text_width(text, size, True) + 10
-        h = size + 8
-        y = max(h, y)
-        x = min(max(0, x), out.shape[1] - w)
-        cv2.rectangle(out, (x, y - h), (x + w, y), color, -1)
-        labels.append((text, (x + 5, y - h + 3), size, (255, 255, 255), True))
+        if focus and not chosen:
+            cv2.polylines(out, [pts.astype(np.int32)], True, (110, 110, 110), max(1, thick // 2))
+            continue
+        # «Не знаю» — тонкая рамка; в толпе без подписи: «?» ничего не говорит
+        # и только закрывает соседей. Узнанная — рамка толще.
+        unsure = r.get("registered", True) and not r.get("cow")
+        cv2.polylines(out, [pts.astype(np.int32)], True, FOCUS if chosen else color,
+                      thick * 2 if chosen else (max(1, thick // 2) if unsure else thick + 1))
+        if unsure and compact:
+            continue
+        text = track_label(r, compact=compact and not chosen)
+        if chosen and r.get("state"):
+            text = f"{r['cow']} · {r['state']}"
+        if warn:
+            text = "! " + text
+        lsize = int(size * 1.25) if chosen else size
+        w = text_width(text, lsize, True) + 2 * pad
+        h = lsize + 2 * pad
+        x0, y0 = pts.min(axis=0)
+        x1, y1 = pts.max(axis=0)
+        spot = _place((int(x0), int(y0), int(x1), int(y1)), w, h, (out.shape[1], out.shape[0]), taken)
+        if spot is None:
+            continue
+        x, y = spot
+        taken.append((x, y, x + w, y + h))
+        cv2.rectangle(out, (x, y), (x + w, y + h), FOCUS if chosen else color, -1)
+        labels.append((text, (x + pad, y + pad - max(1, lsize // 8)), lsize,
+                       INK if chosen else (255, 255, 255), True))
+
+    if focus:
+        trail = np.asarray(focus.get("trail") or [], dtype=np.float32).reshape(-1, 2)
+        if len(trail) > 1:
+            cv2.polylines(out, [trail.astype(np.int32)], False, FOCUS, max(2, thick), cv2.LINE_AA)
+        for i, (px, py) in enumerate(trail):
+            cv2.circle(out, (int(px), int(py)), max(3, thick + (2 if i == len(trail) - 1 else 0)),
+                       FOCUS, -1, cv2.LINE_AA)
+        if not mine and focus.get("note"):
+            note = focus["note"]
+            nsize = int(size * 1.2)
+            w = text_width(note, nsize, True) + 2 * pad
+            cv2.rectangle(out, (0, 0), (w, nsize + 2 * pad), FOCUS, -1)
+            labels.append((note, (pad, pad - max(1, nsize // 8)), nsize, INK, True))
     return put_texts(out, labels)
+
+
+def draw_tracks_small(frame: np.ndarray, rows: list[dict], width: int,
+                      focus: Optional[dict] = None, alerted: frozenset = frozenset()) -> np.ndarray:
+    """Уменьшает кадр до ширины `width` и рисует рамки уже на нём.
+
+    Выглядит так же, как `draw_tracks` на полном кадре с уменьшением после,
+    но на кадре 4K подписи через Pillow стоят ~45 мс, а на 960 px — единицы.
+    """
+    h, w = frame.shape[:2]
+    k = width / w
+    if k >= 1:
+        return draw_tracks(frame, rows, focus=focus, alerted=frozenset(alerted))
+    small = cv2.resize(frame, (width, int(round(h * k))), interpolation=cv2.INTER_AREA)
+    scaled = []
+    for r in rows:
+        r = dict(r)
+        if r.get("corners"):
+            r["corners"] = [(x * k, y * k) for x, y in r["corners"]]
+        if r.get("bbox"):
+            r["bbox"] = [v * k for v in r["bbox"]]
+        scaled.append(r)
+    if focus:
+        focus = {**focus, "trail": [(x * k, y * k) for x, y in focus.get("trail") or []]}
+    return draw_tracks(small, scaled, focus=focus, alerted=frozenset(alerted))
 
 
 def fit(frame: np.ndarray, width: int, height: int) -> np.ndarray:

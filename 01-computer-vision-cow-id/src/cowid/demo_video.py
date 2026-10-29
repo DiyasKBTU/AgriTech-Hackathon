@@ -17,8 +17,8 @@ from typing import Callable, Optional
 import cv2
 import numpy as np
 
-from .live import FrameProcessor, LiveSource, _Models, available_sources, source_config
-from .render import cow_panel, draw_tracks, fit, panel, put_texts, text_width
+from .live import EMPTY_NOTE, FrameProcessor, LiveSource, _Models, available_sources, source_config
+from .render import cow_panel, draw_tracks_small, fit, panel, put_texts, text_width
 
 OUT_DIR = Path("reports/demo")
 W, H = 1600, 720
@@ -53,7 +53,7 @@ PLAN = {
                 "показаны дневные: синяя рамка — лежит. Справа — сравнение с её "
                 "обычными часами и карточка из реестра фермы.",
         "start": 3360,          # 14:00
-        "frames": 600,          # до 16:30
+        "frames": 600,          # кадров с коровами: дойку 15:32–16:07 ролик пропускает, конец ~17:05
         "fps": 6,
     },
 }
@@ -107,18 +107,30 @@ def title_card(title: str, lines: list[str]) -> np.ndarray:
 
 
 def _frames_of(source: LiveSource, spec: dict):
-    """(отрезок, номер кадра, fps, кадр, подпись) по всем файлам источника."""
+    """(отрезок, номер кадра, fps, кадр, подпись) по всем файлам источника.
+
+    Пустой загон (дойка) пропускается: вместо кадров — `None` и пропущенные часы.
+    """
     files = source.target if isinstance(source.target, list) else [source.target]
-    for seg, path in enumerate(files):
+    seg = 0
+    for path in files:
+        seg += 1
         cap = cv2.VideoCapture(str(path))
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-        start = spec.get("start", 0)
-        if start:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+        # У вырезанного ролика (с 14:00) номер кадра в файле меньше номера в сутках.
+        start = max(spec.get("start", 0), source.first_index)
+        if start > source.first_index:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start - source.first_index)
         limit = spec.get("frames")
         name = Path(path).parent.name if Path(path).stem == "RGB" else Path(path).stem
         idx, n = start, 0
         while limit is None or n < limit:
+            empty = source.empty_at(idx)
+            if empty:
+                idx, label = empty
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx - source.first_index)
+                seg += 1
+                yield seg, idx, fps, None, label
             ok, frame = cap.read()
             if not ok:
                 break
@@ -154,13 +166,18 @@ def render(key: str, out: Optional[Path] = None, log: Log = print,
         if seg != segment:
             proc.reset()
             segment = seg
+        if frame is None:
+            for _ in range(int(fps_out * 2)):
+                writer.write(title_card(f"Пропущено {name}", [EMPTY_NOTE.capitalize() + ": по разметке "
+                                        "датасета во всех четырёх камерах ни одной коровы."]))
+            continue
         rows = proc.process(frame, idx, fps)
         state = proc.summary(frame, rows)
         h, w = frame.shape[:2]
         farm = bool(state.get("farm", {}).get("registry"))
         video_w = W - COW_PANEL_W if farm else VIDEO_W
         scale = min(video_w / w, H / h)
-        left = fit(draw_tracks(frame, rows, scale), video_w, H)
+        left = fit(draw_tracks_small(frame, rows, int(w * scale)), video_w, H)
         t = proc.video_time(idx, fps)
         if source.real_seconds_per_frame:
             subtitle = f"время на ферме {int(t // 3600):02d}:{int(t % 3600 // 60):02d}"

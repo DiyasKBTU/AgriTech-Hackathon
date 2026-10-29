@@ -301,14 +301,37 @@ class LearnedEmbedder:
 
     def embed(self, frame: np.ndarray, bbox: BBox,
               corners: Corners = None) -> Optional[np.ndarray]:
-        crop = rectify(frame, corners) if corners else _crop(frame, bbox, pad=0.05)
-        if crop is None:
-            return None
-        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-        tensor = self.preprocess(rgb).unsqueeze(0).to(self.device)
+        return self.embed_many(frame, [(bbox, corners)])[0]
+
+    #: Сколько вырезок за один проход сети: 64 вырезки 224 px — около 1 ГБ видеопамяти.
+    BATCH = 64
+
+    def embed_many(self, frame: np.ndarray,
+                   boxes: list[tuple[BBox, Corners]]) -> list[Optional[np.ndarray]]:
+        """Все коровы кадра одним проходом сети — векторы те же, что по одной.
+
+        На кадре MmCows около 50 коров: по одной это 270 мс на кадр, пачкой — в
+        несколько раз быстрее. Отсюда и подтормаживание живого показа.
+        """
+        crops = [rectify(frame, c) if c else _crop(frame, b, pad=0.05) for b, c in boxes]
+        tensors = [self.preprocess(cv2.cvtColor(c, cv2.COLOR_BGR2RGB))
+                   for c in crops if c is not None]
+        if not tensors:
+            return [None] * len(crops)
         with self.torch.no_grad():
-            vec = self.encoder(tensor).squeeze(0).cpu().numpy()
-        return vec.astype(np.float32)
+            vecs = self.torch.cat([
+                self.encoder(self.torch.stack(tensors[i:i + self.BATCH]).to(self.device)).cpu()
+                for i in range(0, len(tensors), self.BATCH)]).numpy().astype(np.float32)
+        it = iter(vecs)
+        return [next(it) if c is not None else None for c in crops]
+
+
+def embed_detections(embedder: Embedder, frame: np.ndarray, detections) -> list[Optional[np.ndarray]]:
+    """Портреты всех коров кадра: пачкой, если эмбеддер так умеет, иначе по одной."""
+    many = getattr(embedder, "embed_many", None)
+    if many is not None:
+        return many(frame, [(d.bbox, d.corners) for d in detections])
+    return [embedder.embed(frame, d.bbox, d.corners) for d in detections]
 
 
 def build_embedder(cfg: EmbedderConfig) -> Embedder:

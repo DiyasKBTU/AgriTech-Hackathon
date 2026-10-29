@@ -18,6 +18,7 @@
     cowid process <видео> --day ...   обработать запись за сутки
     cowid check-video                 прогон на реальных роликах Cows2021
     cowid import-mmcows               реальные сутки 10 коров MmCows → база и проверка
+    cowid inrae-check                 детектор отклонений на настоящих болезнях (INRAE)
     cowid mmcows-detector             детектор на другой ферме: до и после дообучения
     cowid serve                       платформа: сегодня, стадо, камера, качество
     cowid serve --phone               то же + адрес и https для камеры телефона
@@ -601,6 +602,17 @@ def demo_video(
         dv.render(only, log=_log)
     else:
         dv.render_all(log=_log)
+
+
+@app.command("inrae-check")
+def inrae_check(config: Path = typer.Option(Path("configs/mmcows_sensors.yaml"))):
+    """Детектор отклонений на настоящих болезнях (INRAE, 4 фермы): сколько хромоты,
+    мастита, ацидоза ловит и заранее ли, сколько отметок в спокойные сутки."""
+    from .inrae import run
+
+    cfg = PipelineConfig.load(config) if config.exists() else PipelineConfig()
+    report = run(cfg.baseline, log=_log)
+    _log(report["summary_text"])
 
 
 @app.command("import-mmcows")

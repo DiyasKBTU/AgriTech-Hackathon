@@ -27,7 +27,7 @@ from .activity.zones import Calibration, build_zones
 from .anomaly.baseline import PersonalBaseline
 from .config import PipelineConfig
 from .detect.detectors import Detector, build_detector
-from .identity.embedder import Embedder, build_embedder
+from .identity.embedder import Embedder, build_embedder, embed_detections
 from .identity.gallery import BiometricGallery
 from .identity.identifier import TagTaughtIdentifier
 from .identity.tag_ocr import TagReader, build_tag_reader
@@ -112,7 +112,7 @@ class CowIdPipeline:
         for frame_idx, frame in self._frames(video_path, stride, max_frames):
             frames_read = frame_idx + 1
             detections = self.detector.detect(frame, frame_idx)
-            embeddings = [self.embedder.embed(frame, d.bbox, d.corners) for d in detections]
+            embeddings = embed_detections(self.embedder, frame, detections)
             reads = [self.tag_reader.read(frame, d.bbox) for d in detections]
             active = tracker.update(detections, frame_idx, embeddings)
             self._attach_tag_reads(active, detections, [r.text if r else None for r in reads],

@@ -55,7 +55,7 @@ baseline:
   z_single: 4.0
   single_min_effect_pct: 25.0
   cusum_k: 1.5
-  cusum_h: 2.5
+  cusum_h: 5.0      # с 29.10: на болезнях INRAE ложных «проверить» втрое меньше, чем при 2.5
   prior_relative_spread: 0.15
   prior_weight_days: 7.0
   herd_adjust: true
